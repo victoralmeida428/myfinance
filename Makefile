@@ -5,7 +5,7 @@ SERVICE ?= bot
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install run api test build up down restart logs ps pull deploy
+.PHONY: help install run api test build up down restart logs logs-bot logs-api ps pull deploy
 
 help:
 	@echo "install  - uv sync"
@@ -16,7 +16,9 @@ help:
 	@echo "up       - start api+bot with Docker Compose"
 	@echo "down     - stop the containers"
 	@echo "restart  - restart the containers"
-	@echo "logs     - follow logs (SERVICE=bot|api)"
+	@echo "logs     - follow VPS logs (SERVICE=bot|api)"
+	@echo "logs-bot - follow the VPS bot logs"
+	@echo "logs-api - follow the VPS API logs"
 	@echo "ps       - container status"
 	@echo "pull     - git pull --ff-only"
 	@echo "deploy   - push, pull on VPS, rebuild and restart"
@@ -46,7 +48,13 @@ restart:
 	docker compose restart
 
 logs:
-	docker compose logs -f $(SERVICE)
+	ssh $(VPS) 'cd $(REMOTE_DIR) && docker compose logs -f --tail=100 $(SERVICE)'
+
+logs-bot:
+	ssh $(VPS) 'cd $(REMOTE_DIR) && docker compose logs -f --tail=100 bot'
+
+logs-api:
+	ssh $(VPS) 'cd $(REMOTE_DIR) && docker compose logs -f --tail=100 api'
 
 ps:
 	docker compose ps
