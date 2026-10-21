@@ -192,6 +192,36 @@ def test_resolve_period_ignores_day_references() -> None:
     assert resolve_period(None, today=TODAY) is None
 
 
+def test_resolve_period_understands_do_mes_in_a_natural_phrase() -> None:
+    assert resolve_period(
+        "Quero meus gastos do mês por categoria", today=TODAY
+    ) == (
+        date(2026, 10, 1),
+        date(2026, 10, 20),
+    )
+
+
+def test_resolve_period_understands_no_mes() -> None:
+    assert resolve_period("gastos no mes", today=TODAY) == (
+        date(2026, 10, 1),
+        date(2026, 10, 20),
+    )
+
+
+def test_resolve_period_do_mes_passado_wins_over_do_mes() -> None:
+    assert resolve_period("gastos do mes passado", today=TODAY) == (
+        date(2026, 9, 1),
+        date(2026, 9, 30),
+    )
+
+
+def test_resolve_period_do_mes_que_vem_resolves_to_next_month() -> None:
+    assert resolve_period("gastos do mes que vem", today=TODAY) == (
+        date(2026, 11, 1),
+        date(2026, 11, 30),
+    )
+
+
 def test_build_period_summary_aggregates_entries_across_days() -> None:
     entries = (
         make_entry(

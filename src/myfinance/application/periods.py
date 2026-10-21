@@ -8,12 +8,17 @@ from datetime import date, timedelta
 __all__ = ["resolve_period"]
 
 _LAST_MONTH_MARKERS = ("mes passado", "ultimo mes")
+_NEXT_MONTH_MARKERS = ("mes que vem", "proximo mes")
 _CURRENT_MONTH_MARKERS = (
     "esse mes",
     "este mes",
     "nesse mes",
     "neste mes",
+    "desse mes",
+    "deste mes",
     "mes atual",
+    "do mes",
+    "no mes",
 )
 _CURRENT_WEEK_MARKERS = (
     "essa semana",
@@ -48,6 +53,12 @@ def _previous_month_range(today: date) -> tuple[date, date]:
     return start, last_day_of_previous
 
 
+def _next_month_range(today: date) -> tuple[date, date]:
+    start = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    end = (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    return start, end
+
+
 def resolve_period(
     reference: str | None, *, today: date
 ) -> tuple[date, date] | None:
@@ -63,10 +74,17 @@ def resolve_period(
     if not normalized:
         return None
 
-    # Previous month is checked first so "mes passado" never matches the
-    # current-month marker "mes".
+    # Previous and next month are checked before the current-month markers:
+    # both "mes passado" and "mes que vem" contain the "do mes"/"no mes"
+    # fragments, which would otherwise resolve to the current month.
     if _contains_any(normalized, _LAST_MONTH_MARKERS):
         return _previous_month_range(today)
+
+    if _contains_any(normalized, _NEXT_MONTH_MARKERS):
+        return _next_month_range(today)
+
+    if _contains_any(normalized, _CURRENT_MONTH_MARKERS):
+        return today.replace(day=1), today
 
     # Previous week is checked before the current-week markers so "semana
     # passada" is not mistaken for "essa semana".
@@ -75,9 +93,6 @@ def resolve_period(
         return current_monday - timedelta(days=7), current_monday - timedelta(
             days=1
         )
-
-    if _contains_any(normalized, _CURRENT_MONTH_MARKERS):
-        return today.replace(day=1), today
 
     if _contains_any(normalized, _CURRENT_WEEK_MARKERS):
         monday = today - timedelta(days=today.weekday())
