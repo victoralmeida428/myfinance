@@ -1,0 +1,22 @@
+# Test your FastAPI endpoints
+
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/hello/User
+Accept: application/json
+
+###
+
+# Creates a Pluggy Connect Token server-side.
+# Requires PLUGGY_CLIENT_ID / PLUGGY_CLIENT_SECRET in the server environment.
+POST http://127.0.0.1:8000/api/connect-token
+Content-Type: application/json
+
+{
+  "clientUserId": "user-123"
+}
+
+###
