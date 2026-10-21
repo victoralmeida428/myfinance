@@ -17,6 +17,7 @@ from myfinance.application.dto import (
     IdentityAnswer,
     NoPluggyItem,
     RegistrationResult,
+    TopMonthMessage,
     TransactionsAnswer,
 )
 from myfinance.domain.categories import Category
@@ -36,6 +37,7 @@ __all__ = [
     "format_period_summary",
     "format_registration",
     "format_summary",
+    "format_top_month",
     "mask_document",
 ]
 
@@ -58,6 +60,21 @@ _KIND_LABELS: dict[EntryKind, str] = {
     EntryKind.FORECAST: "PREVISÃO",
     EntryKind.EXPENSE: "DESPESA",
 }
+
+_MONTH_NAMES: tuple[str, ...] = (
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+)
 
 
 def format_brl(cents: int) -> str:
@@ -251,6 +268,52 @@ def _render_balances(summary: DailySummary | PeriodSummary) -> list[str]:
         blocks.append("Status: dentro da meta")
 
     return blocks
+
+
+def format_top_month(message: TopMonthMessage) -> str:
+    """Render the month with the highest realized spending."""
+    if not message.ranking:
+        return "Nenhum gasto encontrado nos últimos 12 meses."
+
+    winner = message.ranking[0]
+    month_label = f"{_MONTH_NAMES[winner.month - 1]}/{winner.year}"
+    headline = (
+        f"O mês em que você mais gastou foi {month_label}: "
+        f"{format_brl(winner.expense_cents)}."
+    )
+    if (
+        winner.year == message.window_end.year
+        and winner.month == message.window_end.month
+    ):
+        headline += " (mês atual, parcial)"
+
+    blocks = [headline]
+    ranking_lines = ["Top 3:"]
+    for position, month in enumerate(message.ranking, start=1):
+        ranking_lines.append(
+            f"{position}. {_MONTH_NAMES[month.month - 1]}/{month.year} — "
+            f"{format_brl(month.expense_cents)}"
+        )
+    blocks.append("\n".join(ranking_lines))
+
+    category_lines = [f"Categorias em {month_label}:"]
+    for balance in message.winner_balances:
+        if balance.expense_cents <= 0:
+            continue
+        line = (
+            f"- {balance.category.label}: "
+            f"{format_brl(balance.expense_cents)}"
+        )
+        if balance.bank_expense_cents > 0:
+            line += (
+                f" (banco {format_brl(balance.bank_expense_cents)} + "
+                f"manual {format_brl(balance.manual_expense_cents)})"
+            )
+        category_lines.append(line)
+    if len(category_lines) > 1:
+        blocks.append("\n".join(category_lines))
+
+    return "\n\n".join(blocks)
 
 
 def format_details(entries: Sequence[Entry], day: date) -> str:

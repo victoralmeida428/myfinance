@@ -16,6 +16,7 @@ from myfinance.application.dto import (
     NeedsClarification,
     RegisteredMessage,
     SummaryMessage,
+    TopMonthMessage,
 )
 from myfinance.application.errors import (
     ApplicationError,
@@ -39,6 +40,7 @@ from myfinance.presentation.telegram.formatting import (
     format_period_summary,
     format_registration,
     format_summary,
+    format_top_month,
 )
 
 __all__ = ["BotHandlers"]
@@ -166,6 +168,8 @@ class BotHandlers:
                 await self._reply(update, format_period_summary(result.summary))
             else:
                 await self._reply(update, format_summary(result.summary))
+        elif isinstance(result, TopMonthMessage):
+            await self._reply(update, format_top_month(result))
         elif isinstance(result, NeedsClarification):
             await self._reply(update, result.reason)
 

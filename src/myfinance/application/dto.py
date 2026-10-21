@@ -10,19 +10,21 @@ from myfinance.domain.banking import BankAccount, BankIdentity, BankTransaction
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
 from myfinance.domain.money import Money
-from myfinance.domain.summary import DailySummary, PeriodSummary
+from myfinance.domain.summary import CategoryBalance, DailySummary, PeriodSummary
 
 __all__ = [
     "AccountsAnswer",
     "BankingAnswer",
     "HandleMessageResult",
     "IdentityAnswer",
+    "MonthlyExpense",
     "NeedsClarification",
     "NoPluggyItem",
     "ParsedMessage",
     "RegisteredMessage",
     "RegistrationResult",
     "SummaryMessage",
+    "TopMonthMessage",
     "TransactionsAnswer",
 ]
 
@@ -68,7 +70,28 @@ class NeedsClarification:
     reason: str
 
 
-type HandleMessageResult = RegisteredMessage | SummaryMessage | NeedsClarification
+@dataclass(frozen=True, slots=True)
+class MonthlyExpense:
+    """The realized expenses of a single calendar month."""
+
+    year: int
+    month: int
+    expense_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class TopMonthMessage:
+    """The months with the highest realized spending in the window."""
+
+    window_start: date
+    window_end: date
+    ranking: tuple[MonthlyExpense, ...]
+    winner_balances: tuple[CategoryBalance, ...]
+
+
+type HandleMessageResult = (
+    RegisteredMessage | SummaryMessage | TopMonthMessage | NeedsClarification
+)
 
 
 @dataclass(frozen=True, slots=True)

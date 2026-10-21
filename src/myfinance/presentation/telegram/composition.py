@@ -13,6 +13,7 @@ from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
+    GetTopSpendingMonthUseCase,
     HandleBankingQueryUseCase,
     HandleMessageUseCase,
     RegisterEntryUseCase,
@@ -106,6 +107,7 @@ def build_container(settings: Settings) -> BotContainer:
     bank_expenses = PluggyBankExpenseProvider(provider, items, classifier)
     summary = GetDailySummaryUseCase(entries, clock, resolver, bank_expenses)
     period_summary = GetPeriodSummaryUseCase(entries, clock, bank_expenses)
+    top_month = GetTopSpendingMonthUseCase(entries, bank_expenses, clock)
     keyword_intent = KeywordIntentRouter()
     jev_intent = JevIntentRouter(settings) if _has_categorizer_token(settings) else None
     router = CompositeIntentRouter(keyword_intent, jev_intent)
@@ -129,6 +131,7 @@ def build_container(settings: Settings) -> BotContainer:
             PortugueseDateReferenceExtractor(),
             period_summary,
             summary_gate,
+            top_month,
         ),
         summary=summary,
         details=GetDayDetailsUseCase(entries, clock, resolver),

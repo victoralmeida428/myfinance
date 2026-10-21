@@ -6,7 +6,7 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from uuid import UUID, uuid4
 
 from myfinance.application.dto import (
@@ -14,12 +14,14 @@ from myfinance.application.dto import (
     BankingAnswer,
     HandleMessageResult,
     IdentityAnswer,
+    MonthlyExpense,
     NeedsClarification,
     NoPluggyItem,
     ParsedMessage,
     RegisteredMessage,
     RegistrationResult,
     SummaryMessage,
+    TopMonthMessage,
     TransactionsAnswer,
 )
 from myfinance.application.errors import InvalidDateReference, ProviderError
@@ -40,7 +42,7 @@ from myfinance.application.ports import (
     SummaryIntentGate,
 )
 from myfinance.domain.banking import BankingIntent, PluggyItem
-from myfinance.domain.entries import Entry
+from myfinance.domain.entries import Entry, EntryKind
 from myfinance.domain.models import ChatMessage, ClientUserId, ConnectToken
 from myfinance.domain.summary import (
     DailySummary,
@@ -55,6 +57,7 @@ __all__ = [
     "GetDailySummaryUseCase",
     "GetDayDetailsUseCase",
     "GetPeriodSummaryUseCase",
+    "GetTopSpendingMonthUseCase",
     "HandleBankingQueryUseCase",
     "HandleMessageUseCase",
     "RegisterEntryUseCase",
@@ -72,6 +75,14 @@ _SUMMARY_PATTERNS = (
     r"\bgastos (de|do|da|desse|deste|nesse|neste)\b",
 )
 
+_TOP_MONTH_PATTERNS = (
+    r"\bqual\b.*\bmes\b.*\bmais\b.*\b(gastei|gasto|gastos)\b",
+    r"\bqual\b.*\bmes\b.*\b(gastei|gasto|gastos)\b.*\bmais\b",
+    r"\bmes\b.*\bmais\b.*\b(gastei|gasto|gastos)\b",
+    r"\bmes com mais gastos\b",
+    r"\bmaior gasto\b",
+)
+
 
 def _strip_accents(text: str) -> str:
     """Lowercase a free-form sentence and remove its accents, using stdlib only."""
@@ -87,6 +98,18 @@ def _strip_accents(text: str) -> str:
 def _asks_for_summary(text: str) -> bool:
     normalized = _strip_accents(text)
     return any(re.search(pattern, normalized) for pattern in _SUMMARY_PATTERNS)
+
+
+def _asks_for_top_month(text: str) -> bool:
+    normalized = _strip_accents(text)
+    return any(re.search(pattern, normalized) for pattern in _TOP_MONTH_PATTERNS)
+
+
+def _shift_month(first_day: date, delta: int) -> date:
+    """Return the first day of the calendar month ``delta`` months away."""
+    index = first_day.year * 12 + (first_day.month - 1) + delta
+    year, month = divmod(index, 12)
+    return date(year, month + 1, 1)
 
 
 class CreateConnectTokenUseCase:
@@ -199,6 +222,87 @@ class GetPeriodSummaryUseCase:
         return build_period_summary(start, end, entries, bank_expenses)
 
 
+class GetTopSpendingMonthUseCase:
+    """Rank the last months by realized spending and return the top month."""
+
+    def __init__(
+        self,
+        repository: EntryRepository,
+        bank_expenses: BankExpenseProvider,
+        clock: Clock,
+    ) -> None:
+        self._repository = repository
+        self._bank_expenses = bank_expenses
+        self._clock = clock
+
+    async def execute(self, months: int = 12) -> TopMonthMessage:
+        today = self._clock.today()
+        start = _shift_month(today.replace(day=1), -(months - 1))
+        entries = await self._repository.list_between(start, today)
+        bank = await self._bank_expenses.expenses(start, today)
+
+        bank_keys = {
+            (expense.day, expense.amount_cents) for expense in bank
+        }
+        totals: dict[tuple[int, int], int] = {}
+        for entry in entries:
+            if entry.kind is EntryKind.FORECAST:
+                continue
+            if (entry.day, entry.amount.cents) in bank_keys:
+                continue
+            key = (entry.day.year, entry.day.month)
+            totals[key] = totals.get(key, 0) + entry.amount.cents
+        for expense in bank:
+            key = (expense.day.year, expense.day.month)
+            totals[key] = totals.get(key, 0) + expense.amount_cents
+
+        ranking = tuple(
+            MonthlyExpense(
+                year=year, month=month, expense_cents=expense_cents
+            )
+            for (year, month), expense_cents in sorted(
+                totals.items(), key=lambda item: (-item[1], item[0])
+            )
+            if expense_cents > 0
+        )[:3]
+
+        if not ranking:
+            return TopMonthMessage(
+                window_start=start,
+                window_end=today,
+                ranking=(),
+                winner_balances=(),
+            )
+
+        winner = ranking[0]
+        month_start = date(winner.year, winner.month, 1)
+        next_month_start = _shift_month(month_start, 1)
+        is_current_month = (
+            winner.year == today.year and winner.month == today.month
+        )
+        month_end = today if is_current_month else next_month_start - timedelta(days=1)
+        summary = build_period_summary(
+            month_start,
+            month_end,
+            tuple(
+                entry
+                for entry in entries
+                if month_start <= entry.day <= month_end
+            ),
+            tuple(
+                expense
+                for expense in bank
+                if month_start <= expense.day <= month_end
+            ),
+        )
+        return TopMonthMessage(
+            window_start=start,
+            window_end=today,
+            ranking=ranking,
+            winner_balances=summary.balances,
+        )
+
+
 class GetDayDetailsUseCase:
     """Return every entry registered for a referenced day."""
 
@@ -232,6 +336,7 @@ class HandleMessageUseCase:
         references: DateReferenceExtractor,
         period_summary: GetPeriodSummaryUseCase | None = None,
         summary_gate: SummaryIntentGate | None = None,
+        top_month: GetTopSpendingMonthUseCase | None = None,
     ) -> None:
         self._parser = parser
         self._register = register
@@ -240,6 +345,7 @@ class HandleMessageUseCase:
         self._references = references
         self._period_summary = period_summary
         self._summary_gate = summary_gate
+        self._top_month = top_month
 
     async def execute(self, text: str) -> HandleMessageResult:
         decision = None
@@ -250,6 +356,8 @@ class HandleMessageUseCase:
                 decision = None
         wants_summary = decision if decision is not None else _asks_for_summary(text)
         if wants_summary:
+            if self._top_month is not None and _asks_for_top_month(text):
+                return await self._top_month.execute()
             if self._period_summary is not None:
                 period = await self._period_summary.execute(text)
                 if period is not None:
