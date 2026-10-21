@@ -90,12 +90,19 @@ def seed_configured_item(settings: Settings, container: BotContainer) -> None:
     )
 
 
-def run_bot() -> None:
-    """Start the bot in long-polling mode (no HTTP server is exposed)."""
+def _configure_logging() -> None:
+    """Configure app logging without leaking request URLs (and bot tokens)."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    for name in ("httpx", "httpcore", "httpx2", "openai"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def run_bot() -> None:
+    """Start the bot in long-polling mode (no HTTP server is exposed)."""
+    _configure_logging()
     settings = get_settings()
     _require_token(settings)
     _require_owner(settings)
