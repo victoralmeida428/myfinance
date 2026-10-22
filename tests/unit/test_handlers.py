@@ -5,12 +5,14 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+from myfinance.application.errors import ProviderError
 from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     HandleMessageUseCase,
     RegisterEntryUseCase,
 )
+from myfinance.domain.banking import BankExpense
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
 from myfinance.domain.money import Money
@@ -71,6 +73,40 @@ class FakeMessage:
         self.replies.append(text)
 
 
+class FakeExplainer:
+    """Records the question and error, then returns or raises a fixed reply."""
+
+    def __init__(
+        self,
+        reply: str = "O banco não respondeu. Tente novamente.",
+        *,
+        error: ProviderError | None = None,
+    ) -> None:
+        self.reply = reply
+        self.error = error
+        self.calls: list[tuple[str, Exception]] = []
+
+    async def execute(self, *, question: str, error: Exception) -> str:
+        self.calls.append((question, error))
+        if self.error is not None:
+            raise self.error
+        return self.reply
+
+
+class FailingBankExpenses:
+    """A BankExpenseProvider that always reports the bank as unavailable."""
+
+    def __init__(self, message: str = "pluggy down") -> None:
+        self._message = message
+        self.calls: list[tuple[date, date]] = []
+
+    async def expenses(
+        self, start: date, end: date
+    ) -> tuple[BankExpense, ...]:
+        self.calls.append((start, end))
+        raise ProviderError(self._message)
+
+
 def make_entry(day: date) -> Entry:
     return Entry(
         id=uuid4(),
@@ -86,13 +122,17 @@ def make_entry(day: date) -> Entry:
 def build_handlers(
     repository: InMemoryEntryRepository | None = None,
     updates: InMemoryProcessedUpdates | None = None,
+    explain_failure: FakeExplainer | None = None,
+    bank_expenses: FailingBankExpenses | None = None,
 ) -> tuple[BotHandlers, InMemoryEntryRepository, InMemoryProcessedUpdates]:
     repository = repository or InMemoryEntryRepository()
     updates = updates or InMemoryProcessedUpdates()
     clock = FixedClock(NOW)
     resolver = PortugueseDateResolver()
     register = RegisterEntryUseCase(repository, clock)
-    summary = GetDailySummaryUseCase(repository, clock, resolver)
+    summary = GetDailySummaryUseCase(
+        repository, clock, resolver, bank_expenses
+    )
     handlers = BotHandlers(
         handle_message=HandleMessageUseCase(
             DeterministicMessageParser(resolver),
@@ -104,6 +144,7 @@ def build_handlers(
         summary=summary,
         details=GetDayDetailsUseCase(repository, clock, resolver),
         updates=updates,
+        explain_failure=explain_failure,
     )
     return handlers, repository, updates
 
@@ -205,3 +246,33 @@ async def test_help_replies_with_the_help_text() -> None:
     await handlers.help(update, context())
 
     assert message.replies == [HELP_TEXT]
+
+
+async def test_message_explains_a_bank_provider_failure() -> None:
+    explainer = FakeExplainer("O banco não respondeu. Tente novamente.")
+    handlers, _repository, _updates = build_handlers(
+        explain_failure=explainer,
+        bank_expenses=FailingBankExpenses(),
+    )
+    question = "Como estão meus gastos de hoje?"
+    update, message = make_update(10, question)
+
+    await handlers.message(update, context())
+
+    assert message.replies == [explainer.reply]
+    asked, error = explainer.calls[0]
+    assert asked == question
+    assert isinstance(error, ProviderError)
+
+
+async def test_message_falls_back_when_the_explainer_fails() -> None:
+    explainer = FakeExplainer(error=ProviderError("llm down"))
+    handlers, _repository, _updates = build_handlers(
+        explain_failure=explainer,
+        bank_expenses=FailingBankExpenses(),
+    )
+    update, message = make_update(11, "Como estão meus gastos de hoje?")
+
+    await handlers.message(update, context())
+
+    assert message.replies == ["Não consegui concluir agora. Tente novamente."]

@@ -11,6 +11,7 @@ import asyncio
 import time
 
 import anyio
+import urllib3
 from pluggy_sdk import ApiClient, ApiException, AuthApi, AuthRequest, Configuration
 
 from myfinance.application.errors import ProviderError
@@ -19,6 +20,7 @@ from myfinance.config import Settings, pluggy_credentials
 __all__ = ["PluggyApiClientFactory"]
 
 _API_KEY_TTL_SECONDS = 110 * 60
+_REQUEST_TIMEOUT_SECONDS = 30
 
 
 class PluggyApiClientFactory:
@@ -41,11 +43,11 @@ class PluggyApiClientFactory:
                 return self._cached_client
 
             try:
-                api_key = await anyio.to_thread.run_sync(self._authenticate)
-            except ApiException as exc:
-                raise ProviderError(
-                    "Pluggy rejected the authentication request."
-                ) from exc
+                api_key = await anyio.to_thread.run_sync(
+                    self._authenticate, abandon_on_cancel=True
+                )
+            except (ApiException, urllib3.exceptions.HTTPError) as exc:
+                raise ProviderError("Pluggy authentication failed.") from exc
 
             configuration = Configuration(host=self._settings.pluggy_base_url)
             configuration.api_key["default"] = api_key
@@ -63,7 +65,8 @@ class PluggyApiClientFactory:
                 AuthRequest(
                     client_id=self._client_id,
                     client_secret=self._client_secret.get_secret_value(),
-                )
+                ),
+                _request_timeout=_REQUEST_TIMEOUT_SECONDS,
             )
             .api_key
         )

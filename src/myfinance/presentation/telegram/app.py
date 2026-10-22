@@ -50,9 +50,12 @@ def build_telegram_application(
         period_summary=container.period_summary,
         banking=container.banking,
         register_item=container.register_item,
+        explain_failure=container.explain_failure,
     )
 
-    application = Application.builder().token(token).build()
+    application = (
+        Application.builder().token(token).concurrent_updates(True).build()
+    )
     application.add_handler(
         CommandHandler(["start"], handlers.start, filters=owner)
     )

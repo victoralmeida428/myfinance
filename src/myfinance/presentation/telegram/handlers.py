@@ -25,6 +25,7 @@ from myfinance.application.errors import (
 )
 from myfinance.application.ports import ProcessedUpdateRepository
 from myfinance.application.use_cases import (
+    ExplainFailureUseCase,
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
@@ -69,6 +70,7 @@ class BotHandlers:
         period_summary: GetPeriodSummaryUseCase | None = None,
         banking: HandleBankingQueryUseCase | None = None,
         register_item: RegisterPluggyItemUseCase | None = None,
+        explain_failure: ExplainFailureUseCase | None = None,
     ) -> None:
         self._handle_message = handle_message
         self._summary = summary
@@ -77,6 +79,7 @@ class BotHandlers:
         self._period_summary = period_summary
         self._banking = banking
         self._register_item = register_item
+        self._explain_failure = explain_failure
 
     async def start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -105,8 +108,10 @@ class BotHandlers:
         except InvalidDateReference:
             await self._reply(update, _INVALID_DATE_REPLY)
             return
-        except (ApplicationError, ProviderError):
-            await self._reply(update, _GENERIC_ERROR_REPLY)
+        except (ApplicationError, ProviderError) as exc:
+            await self._reply_failure(
+                update, self._question_text(update, "resumo do dia"), exc
+            )
             return
         await self._reply(update, format_summary(summary))
 
@@ -126,8 +131,10 @@ class BotHandlers:
         except InvalidDateReference:
             await self._reply(update, _INVALID_DATE_REPLY)
             return
-        except (ApplicationError, ProviderError):
-            await self._reply(update, _GENERIC_ERROR_REPLY)
+        except (ApplicationError, ProviderError) as exc:
+            await self._reply_failure(
+                update, self._question_text(update, "detalhes do dia"), exc
+            )
             return
         await self._reply(update, format_details(entries, day))
 
@@ -148,8 +155,8 @@ class BotHandlers:
         if self._banking is not None:
             try:
                 answer = await self._banking.execute(text)
-            except (ApplicationError, ProviderError):
-                await self._reply(update, _GENERIC_ERROR_REPLY)
+            except (ApplicationError, ProviderError) as exc:
+                await self._reply_failure(update, text, exc)
                 return
             if answer is not None:
                 await self._reply(update, format_banking(answer))
@@ -157,8 +164,8 @@ class BotHandlers:
 
         try:
             result = await self._handle_message.execute(text)
-        except (ApplicationError, ProviderError):
-            await self._reply(update, _GENERIC_ERROR_REPLY)
+        except (ApplicationError, ProviderError) as exc:
+            await self._reply_failure(update, text, exc)
             return
 
         if isinstance(result, RegisteredMessage):
@@ -204,10 +211,38 @@ class BotHandlers:
                 status="created",
                 connector_name=connector_name,
             )
-        except (ApplicationError, ProviderError):
-            await self._reply(update, _GENERIC_ERROR_REPLY)
+        except (ApplicationError, ProviderError) as exc:
+            await self._reply_failure(
+                update, self._question_text(update, "registrar item do Pluggy"), exc
+            )
             return
         await self._reply(update, _ITEM_REGISTERED_REPLY)
+
+    async def _reply_failure(
+        self, update: Update, question: str, error: Exception
+    ) -> None:
+        """Explain the failure when possible, otherwise use the generic reply."""
+        if self._explain_failure is None:
+            await self._reply(update, _GENERIC_ERROR_REPLY)
+            return
+        try:
+            explanation = await self._explain_failure.execute(
+                question=question, error=error
+            )
+        except ProviderError:
+            await self._reply(update, _GENERIC_ERROR_REPLY)
+            return
+        text = explanation.strip()
+        await self._reply(update, text or _GENERIC_ERROR_REPLY)
+
+    @staticmethod
+    def _question_text(update: Update, fallback: str) -> str:
+        """Return the command text when present, else a short description."""
+        telegram_message = update.effective_message
+        text = telegram_message.text if telegram_message is not None else None
+        if text and text.strip():
+            return text.strip()
+        return fallback
 
     @staticmethod
     def _reference(args: list[str] | None) -> str | None:

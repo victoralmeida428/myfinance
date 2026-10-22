@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 import anyio
+import urllib3
 from pluggy_sdk import (
     Account,
     AccountApi,
@@ -38,6 +39,7 @@ from myfinance.infrastructure.pluggy_client import PluggyApiClientFactory
 __all__ = ["PluggyBankingProvider"]
 
 _MAX_TRANSACTION_PAGES = 20
+_REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _next_after(next_value: str | None) -> str | None:
@@ -61,9 +63,9 @@ class PluggyBankingProvider:
         client = await self._factory.client()
         try:
             accounts = await anyio.to_thread.run_sync(
-                self._fetch_accounts, client, item_id
+                self._fetch_accounts, client, item_id, abandon_on_cancel=True
             )
-        except ApiException as exc:
+        except (ApiException, urllib3.exceptions.HTTPError) as exc:
             raise ProviderError(
                 "Pluggy rejected the accounts request."
             ) from exc
@@ -75,9 +77,14 @@ class PluggyBankingProvider:
         client = await self._factory.client()
         try:
             item_id, transactions = await anyio.to_thread.run_sync(
-                self._fetch_transactions, client, account_id, start, end
+                self._fetch_transactions,
+                client,
+                account_id,
+                start,
+                end,
+                abandon_on_cancel=True,
             )
-        except ApiException as exc:
+        except (ApiException, urllib3.exceptions.HTTPError) as exc:
             raise ProviderError(
                 "Pluggy rejected the transactions request."
             ) from exc
@@ -90,9 +97,9 @@ class PluggyBankingProvider:
         client = await self._factory.client()
         try:
             identity = await anyio.to_thread.run_sync(
-                self._fetch_identity, client, item_id
+                self._fetch_identity, client, item_id, abandon_on_cancel=True
             )
-        except ApiException as exc:
+        except (ApiException, urllib3.exceptions.HTTPError) as exc:
             raise ProviderError(
                 "Pluggy rejected the identity request."
             ) from exc
@@ -103,14 +110,18 @@ class PluggyBankingProvider:
     @staticmethod
     def _fetch_accounts(client: ApiClient, item_id: UUID) -> Sequence[Account]:
         """Blocking call: list the accounts of one item."""
-        return AccountApi(client).accounts_list(item_id=item_id).results
+        return AccountApi(client).accounts_list(
+            item_id=item_id, _request_timeout=_REQUEST_TIMEOUT_SECONDS
+        ).results
 
     @staticmethod
     def _fetch_transactions(
         client: ApiClient, account_id: UUID, start: date, end: date
     ) -> tuple[UUID, Sequence[Transaction]]:
         """Blocking call: resolve the item id and page through the movements."""
-        account = AccountApi(client).accounts_retrieve(id=str(account_id))
+        account = AccountApi(client).accounts_retrieve(
+            id=str(account_id), _request_timeout=_REQUEST_TIMEOUT_SECONDS
+        )
         item_id = UUID(str(account.item_id))
         api = TransactionApi(client)
         results: list[Transaction] = []
@@ -121,6 +132,7 @@ class PluggyBankingProvider:
                 date_from=datetime.combine(start, time.min),
                 date_to=datetime.combine(end, time.max),
                 after=after,
+                _request_timeout=_REQUEST_TIMEOUT_SECONDS,
             )
             results.extend(page.results)
             after = _next_after(page.next)
@@ -133,7 +145,9 @@ class PluggyBankingProvider:
         client: ApiClient, item_id: UUID
     ) -> IdentityResponse | None:
         """Blocking call: fetch the identity attached to one item."""
-        return IdentityApi(client).identity_find_by_item(item_id=item_id)
+        return IdentityApi(client).identity_find_by_item(
+            item_id=item_id, _request_timeout=_REQUEST_TIMEOUT_SECONDS
+        )
 
     @staticmethod
     def _map_account(account: Account) -> BankAccount:

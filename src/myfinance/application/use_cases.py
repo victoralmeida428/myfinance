@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
 from collections.abc import Sequence
@@ -54,6 +55,7 @@ from myfinance.domain.summary import (
 __all__ = [
     "ChatUseCase",
     "CreateConnectTokenUseCase",
+    "ExplainFailureUseCase",
     "GetDailySummaryUseCase",
     "GetDayDetailsUseCase",
     "GetPeriodSummaryUseCase",
@@ -63,6 +65,16 @@ __all__ = [
     "RegisterEntryUseCase",
     "RegisterPluggyItemUseCase",
 ]
+
+_EXPLANATION_TIMEOUT_SECONDS = 15
+
+_EXPLANATION_SYSTEM_PROMPT = (
+    "Você é um assistente financeiro pessoal. Responda em português do "
+    "Brasil, em no máximo três frases. Diga que não foi possível concluir o "
+    "pedido, explique a causa em linguagem simples, repita brevemente o que "
+    "a pessoa pediu e sugira tentar novamente. Nunca invente valores ou "
+    "lançamentos e nunca exponha tokens, URLs ou detalhes técnicos."
+)
 
 _SUMMARY_PATTERNS = (
     r"\bresumo\b",
@@ -137,6 +149,38 @@ class ChatUseCase:
         return await self._model.complete(messages, session_id=session_id)
 
 
+class ExplainFailureUseCase:
+    """Ask the language model to explain a failed request in plain Portuguese."""
+
+    def __init__(self, model: LanguageModel) -> None:
+        self._model = model
+
+    async def execute(self, *, question: str, error: Exception) -> str:
+        messages = (
+            ChatMessage(role="system", content=_EXPLANATION_SYSTEM_PROMPT),
+            ChatMessage(
+                role="user",
+                content=(
+                    f"Pedido do usuário: {question}\n"
+                    f"Falha: {type(error).__name__}: {error}"
+                ),
+            ),
+        )
+        try:
+            text = await asyncio.wait_for(
+                self._model.complete(messages),
+                timeout=_EXPLANATION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise ProviderError(
+                "A explicação do erro demorou demais."
+            ) from exc
+        explanation = text.strip()
+        if not explanation:
+            raise ProviderError("O modelo não explicou a falha.")
+        return explanation
+
+
 class RegisterEntryUseCase:
     """Persist a parsed entry and return the updated daily summary."""
 
@@ -161,7 +205,11 @@ class RegisterEntryUseCase:
 
 
 class GetDailySummaryUseCase:
-    """Return the daily summary for a referenced day."""
+    """Return the daily summary for a referenced day.
+
+    Provider failures propagate so callers can explain them instead of
+    rendering an empty day.
+    """
 
     def __init__(
         self,
@@ -180,10 +228,7 @@ class GetDailySummaryUseCase:
         entries = await self._repository.list_by_day(day)
         bank_expenses = ()
         if self._bank_expenses is not None:
-            try:
-                bank_expenses = await self._bank_expenses.expenses(day, day)
-            except ProviderError:
-                bank_expenses = ()
+            bank_expenses = await self._bank_expenses.expenses(day, day)
         return build_daily_summary(day, entries, bank_expenses)
 
     def _resolve(self, reference: str | None) -> date:
@@ -195,7 +240,11 @@ class GetDailySummaryUseCase:
 
 
 class GetPeriodSummaryUseCase:
-    """Return the summary of the period named by a reference, when recognised."""
+    """Return the summary of the period named by a reference, when recognised.
+
+    Provider failures propagate so callers can explain them instead of
+    rendering an empty period.
+    """
 
     def __init__(
         self,
@@ -215,10 +264,7 @@ class GetPeriodSummaryUseCase:
         entries = await self._repository.list_between(start, end)
         bank_expenses = ()
         if self._bank_expenses is not None:
-            try:
-                bank_expenses = await self._bank_expenses.expenses(start, end)
-            except ProviderError:
-                bank_expenses = ()
+            bank_expenses = await self._bank_expenses.expenses(start, end)
         return build_period_summary(start, end, entries, bank_expenses)
 
 
@@ -357,7 +403,14 @@ class HandleMessageUseCase:
         wants_summary = decision if decision is not None else _asks_for_summary(text)
         if wants_summary:
             if self._top_month is not None and _asks_for_top_month(text):
-                return await self._top_month.execute()
+                try:
+                    return await asyncio.wait_for(
+                        self._top_month.execute(), timeout=45
+                    )
+                except TimeoutError as exc:
+                    raise ProviderError(
+                        "A consulta de meses demorou demais. Tente novamente."
+                    ) from exc
             if self._period_summary is not None:
                 period = await self._period_summary.execute(text)
                 if period is not None:

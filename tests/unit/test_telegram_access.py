@@ -23,6 +23,7 @@ def make_container() -> SimpleNamespace:
         period_summary=None,
         banking=None,
         register_item=None,
+        explain_failure=None,
     )
 
 

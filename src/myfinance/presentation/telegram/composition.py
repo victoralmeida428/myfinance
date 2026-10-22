@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from myfinance.application.ports import MessageParser, ProcessedUpdateRepository
 from myfinance.application.use_cases import (
+    ExplainFailureUseCase,
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
@@ -69,6 +70,7 @@ class BotContainer:
     period_summary: GetPeriodSummaryUseCase
     banking: HandleBankingQueryUseCase
     register_item: RegisterPluggyItemUseCase
+    explain_failure: ExplainFailureUseCase | None
 
 
 def build_container(settings: Settings) -> BotContainer:
@@ -88,8 +90,11 @@ def build_container(settings: Settings) -> BotContainer:
         classifier = keyword
     deterministic = DeterministicMessageParser(resolver, classifier)
     llm: MessageParser | None = None
+    explain_failure: ExplainFailureUseCase | None = None
     if _has_opencode_key(settings):
-        llm = OpenCodeMessageParser(OpenCodeLanguageModel(settings), classifier)
+        model = OpenCodeLanguageModel(settings)
+        llm = OpenCodeMessageParser(model, classifier)
+        explain_failure = ExplainFailureUseCase(model)
     parser = CompositeMessageParser(
         deterministic,
         llm,
@@ -139,6 +144,7 @@ def build_container(settings: Settings) -> BotContainer:
         period_summary=period_summary,
         banking=banking,
         register_item=register_item,
+        explain_failure=explain_failure,
     )
 
 
