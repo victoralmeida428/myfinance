@@ -17,6 +17,7 @@ from myfinance.application.dto import (
     IdentityAnswer,
     NoPluggyItem,
     RegistrationResult,
+    SpendingAnswerMessage,
     TopMonthMessage,
     TransactionsAnswer,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "format_details",
     "format_period_summary",
     "format_registration",
+    "format_spending_answer",
     "format_summary",
     "format_top_month",
     "mask_document",
@@ -196,6 +198,25 @@ def format_registration(result: RegistrationResult) -> str:
             f"({format_brl(balance.expense_cents)})."
         )
     return "\n".join(lines)
+
+
+def format_spending_answer(message: SpendingAnswerMessage) -> str:
+    """Render the answer to a free-form spending question."""
+    if message.start == message.end:
+        period = f"em {format_date(message.start)}"
+    else:
+        period = (
+            f"de {format_date(message.start)} a {format_date(message.end)}"
+        )
+
+    if message.count == 0:
+        return f"Nenhum gasto com {message.label} {period}."
+
+    noun = "lançamento" if message.count == 1 else "lançamentos"
+    return (
+        f"Você gastou {format_brl(message.total_cents)} com "
+        f"{message.label} {period} ({message.count} {noun})."
+    )
 
 
 def format_summary(summary: DailySummary) -> str:

@@ -3,7 +3,10 @@
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
-from myfinance.application.dto import RegistrationResult
+from myfinance.application.dto import (
+    RegistrationResult,
+    SpendingAnswerMessage,
+)
 from myfinance.domain.banking import BankExpense
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
@@ -14,6 +17,7 @@ from myfinance.presentation.telegram.formatting import (
     format_date,
     format_details,
     format_registration,
+    format_spending_answer,
     format_summary,
 )
 
@@ -186,3 +190,63 @@ def test_format_summary_keeps_the_manual_only_realized_amount_unchanged() -> Non
 
     assert "Realizado: R$ 45,00" in text
     assert "(banco" not in text
+
+
+def make_spending_answer(
+    *,
+    start: date = date(2026, 10, 1),
+    end: date = date(2026, 10, 22),
+    label: str = "Uber",
+    total_cents: int = 34250,
+    count: int = 12,
+) -> SpendingAnswerMessage:
+    return SpendingAnswerMessage(
+        start=start,
+        end=end,
+        label=label,
+        total_cents=total_cents,
+        count=count,
+        category=None,
+        keywords=("uber",),
+    )
+
+
+def test_format_spending_answer_for_a_single_match() -> None:
+    text = format_spending_answer(
+        make_spending_answer(total_cents=3425, count=1)
+    )
+
+    assert text == (
+        "Você gastou R$ 34,25 com Uber de 01/10/2026 a 22/10/2026 "
+        "(1 lançamento)."
+    )
+
+
+def test_format_spending_answer_for_multiple_matches() -> None:
+    text = format_spending_answer(make_spending_answer())
+
+    assert text == (
+        "Você gastou R$ 342,50 com Uber de 01/10/2026 a 22/10/2026 "
+        "(12 lançamentos)."
+    )
+
+
+def test_format_spending_answer_for_zero_matches() -> None:
+    text = format_spending_answer(
+        make_spending_answer(total_cents=0, count=0)
+    )
+
+    assert text == "Nenhum gasto com Uber de 01/10/2026 a 22/10/2026."
+
+
+def test_format_spending_answer_for_a_same_day_range() -> None:
+    day = date(2026, 10, 22)
+    text = format_spending_answer(
+        make_spending_answer(
+            start=day, end=day, total_cents=9000, count=3
+        )
+    )
+
+    assert text == (
+        "Você gastou R$ 90,00 com Uber em 22/10/2026 (3 lançamentos)."
+    )
