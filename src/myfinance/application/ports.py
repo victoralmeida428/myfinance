@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from myfinance.application.dto import ParsedMessage, SpendingQuery
@@ -27,9 +27,11 @@ __all__ = [
     "CategoryClassifier",
     "Clock",
     "ConnectTokenProvider",
+    "ConversationMemory",
     "DateReferenceExtractor",
     "DateResolver",
     "EntryRepository",
+    "FollowUpResolver",
     "IntentRouter",
     "LanguageModel",
     "LLMGate",
@@ -64,6 +66,31 @@ class LanguageModel(Protocol):
         *,
         session_id: str | None = None,
     ) -> str: ...
+
+
+class ConversationMemory(Protocol):
+    """Stores the recent exchanges of a chat and reloads them in order."""
+
+    async def append(
+        self,
+        chat_id: str,
+        role: Literal["user", "assistant"],
+        content: str,
+    ) -> None: ...
+
+    async def recent(
+        self, chat_id: str, *, exchanges: int = 5
+    ) -> Sequence[ChatMessage]: ...
+
+    async def clear(self, chat_id: str) -> None: ...
+
+
+class FollowUpResolver(Protocol):
+    """Rewrites an elliptical follow-up into a standalone question."""
+
+    async def rewrite(
+        self, text: str, history: Sequence[ChatMessage]
+    ) -> str | None: ...
 
 
 class EntryRepository(Protocol):

@@ -51,6 +51,8 @@ def build_telegram_application(
         banking=container.banking,
         register_item=container.register_item,
         explain_failure=container.explain_failure,
+        memory=container.memory,
+        follow_up=container.follow_up,
     )
 
     application = (

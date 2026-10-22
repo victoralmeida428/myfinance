@@ -7,6 +7,10 @@ all rendering lives in :mod:`myfinance.presentation.telegram.formatting`.
 
 from __future__ import annotations
 
+import logging
+import unicodedata
+from collections.abc import Sequence
+from typing import Literal
 from uuid import UUID
 
 from telegram import Update
@@ -24,7 +28,11 @@ from myfinance.application.errors import (
     InvalidDateReference,
     ProviderError,
 )
-from myfinance.application.ports import ProcessedUpdateRepository
+from myfinance.application.ports import (
+    ConversationMemory,
+    FollowUpResolver,
+    ProcessedUpdateRepository,
+)
 from myfinance.application.use_cases import (
     ExplainFailureUseCase,
     GetDailySummaryUseCase,
@@ -34,6 +42,7 @@ from myfinance.application.use_cases import (
     HandleMessageUseCase,
     RegisterPluggyItemUseCase,
 )
+from myfinance.domain.models import ChatMessage
 from myfinance.domain.summary import PeriodSummary
 from myfinance.presentation.telegram.commands import HELP_TEXT
 from myfinance.presentation.telegram.formatting import (
@@ -48,6 +57,8 @@ from myfinance.presentation.telegram.formatting import (
 
 __all__ = ["BotHandlers"]
 
+_LOGGER = logging.getLogger(__name__)
+
 _INVALID_DATE_REPLY = "Não entendi a data. Use hoje, ontem, amanhã, 2026-10-25 ou 25/10."
 _GENERIC_ERROR_REPLY = "Não consegui concluir agora. Tente novamente."
 _UNSUPPORTED_REPLY = "Por enquanto eu só entendo mensagens de texto."
@@ -57,6 +68,54 @@ _ITEM_REGISTERED_REPLY = (
     "Item registrado. Já pode perguntar 'qual meu saldo' ou "
     "'extrato de hoje'."
 )
+
+_FOLLOW_UP_PREFIXES = (
+    "e ",
+    "e,",
+    "tambem",
+    "agora",
+    "no cartao",
+    "na conta",
+    "desse",
+    "mesmo",
+    "e de",
+    "e em",
+    "e no",
+    "e na",
+)
+_MAX_FOLLOW_UP_WORDS = 6
+
+
+def _chat_id(update: Update) -> str | None:
+    """Return the chat identifier, falling back to the user identifier."""
+    chat = getattr(update, "effective_chat", None)
+    if chat is not None:
+        return str(chat.id)
+    user = getattr(update, "effective_user", None)
+    if user is not None:
+        return str(user.id)
+    return None
+
+
+def _looks_like_follow_up(text: str) -> bool:
+    """Return whether ``text`` is short or starts like an elliptical follow-up."""
+    normalized = _normalize(text)
+    if not normalized:
+        return False
+    if len(normalized.split()) <= _MAX_FOLLOW_UP_WORDS:
+        return True
+    return normalized.startswith(_FOLLOW_UP_PREFIXES)
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip accents and collapse whitespace."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    without_marks = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return " ".join(without_marks.lower().split())
 
 
 class BotHandlers:
@@ -73,6 +132,8 @@ class BotHandlers:
         banking: HandleBankingQueryUseCase | None = None,
         register_item: RegisterPluggyItemUseCase | None = None,
         explain_failure: ExplainFailureUseCase | None = None,
+        memory: ConversationMemory | None = None,
+        follow_up: FollowUpResolver | None = None,
     ) -> None:
         self._handle_message = handle_message
         self._summary = summary
@@ -82,6 +143,8 @@ class BotHandlers:
         self._banking = banking
         self._register_item = register_item
         self._explain_failure = explain_failure
+        self._memory = memory
+        self._follow_up = follow_up
 
     async def start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -154,6 +217,27 @@ class BotHandlers:
         if not text or not text.strip():
             return
 
+        chat_id = _chat_id(update)
+        history = await self._history(chat_id)
+        original_text = text
+        if (
+            history
+            and self._follow_up is not None
+            and _looks_like_follow_up(text)
+        ):
+            try:
+                rewritten = await self._follow_up.rewrite(text, history)
+            except ProviderError:
+                rewritten = None
+            if rewritten:
+                text = rewritten
+
+        await self._remember(chat_id, "user", original_text)
+
+        async def reply_and_remember(content: str) -> None:
+            await self._reply(update, content)
+            await self._remember(chat_id, "assistant", content)
+
         if self._banking is not None:
             try:
                 answer = await self._banking.execute(text)
@@ -161,7 +245,7 @@ class BotHandlers:
                 await self._reply_failure(update, text, exc)
                 return
             if answer is not None:
-                await self._reply(update, format_banking(answer))
+                await reply_and_remember(format_banking(answer))
                 return
 
         try:
@@ -171,18 +255,20 @@ class BotHandlers:
             return
 
         if isinstance(result, RegisteredMessage):
-            await self._reply(update, format_registration(result.result))
+            await reply_and_remember(format_registration(result.result))
         elif isinstance(result, SummaryMessage):
             if isinstance(result.summary, PeriodSummary):
-                await self._reply(update, format_period_summary(result.summary))
+                await reply_and_remember(
+                    format_period_summary(result.summary)
+                )
             else:
-                await self._reply(update, format_summary(result.summary))
+                await reply_and_remember(format_summary(result.summary))
         elif isinstance(result, TopMonthMessage):
-            await self._reply(update, format_top_month(result))
+            await reply_and_remember(format_top_month(result))
         elif isinstance(result, SpendingAnswerMessage):
-            await self._reply(update, format_spending_answer(result))
+            await reply_and_remember(format_spending_answer(result))
         elif isinstance(result, NeedsClarification):
-            await self._reply(update, result.reason)
+            await reply_and_remember(result.reason)
 
     async def unsupported(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -221,6 +307,34 @@ class BotHandlers:
             )
             return
         await self._reply(update, _ITEM_REGISTERED_REPLY)
+
+    async def _history(self, chat_id: str | None) -> Sequence[ChatMessage]:
+        """Load the recent exchanges, tolerating an unavailable memory."""
+        if self._memory is None or chat_id is None:
+            return ()
+        try:
+            return await self._memory.recent(chat_id, exchanges=5)
+        except Exception as exc:
+            _LOGGER.error(
+                "Conversation memory read failed with %s", type(exc).__name__
+            )
+            return ()
+
+    async def _remember(
+        self,
+        chat_id: str | None,
+        role: Literal["user", "assistant"],
+        content: str,
+    ) -> None:
+        """Store a message without ever breaking the reply on failure."""
+        if self._memory is None or chat_id is None:
+            return
+        try:
+            await self._memory.append(chat_id, role, content)
+        except Exception as exc:
+            _LOGGER.error(
+                "Conversation memory write failed with %s", type(exc).__name__
+            )
 
     async def _reply_failure(
         self, update: Update, question: str, error: Exception

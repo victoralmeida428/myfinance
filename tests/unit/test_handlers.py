@@ -16,6 +16,7 @@ from myfinance.application.use_cases import (
 from myfinance.domain.banking import BankExpense
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
+from myfinance.domain.models import ChatMessage
 from myfinance.domain.money import Money
 from myfinance.infrastructure.parsing.dates import PortugueseDateResolver
 from myfinance.infrastructure.parsing.deterministic import (
@@ -120,6 +121,40 @@ class FailingBankExpenses:
         raise ProviderError(self._message)
 
 
+class FakeMemory:
+    """An in-memory ConversationMemory that records what the handler stores."""
+
+    def __init__(self, rows: list[ChatMessage] | None = None) -> None:
+        self.rows = list(rows or [])
+        self.appended: list[tuple[str, str, str]] = []
+
+    async def append(self, chat_id: str, role: str, content: str) -> None:
+        self.appended.append((chat_id, role, content))
+        self.rows.append(ChatMessage(role=role, content=content))
+
+    async def recent(
+        self, chat_id: str, *, exchanges: int = 5
+    ) -> tuple[ChatMessage, ...]:
+        return tuple(self.rows[-exchanges * 2 :])
+
+    async def clear(self, chat_id: str) -> None:
+        self.rows.clear()
+
+
+class FakeFollowUp:
+    """A FollowUpResolver that returns a canned rewrite and records calls."""
+
+    def __init__(self, rewritten: str | None = "pergunta reescrita") -> None:
+        self.rewritten = rewritten
+        self.calls: list[tuple[str, tuple[ChatMessage, ...]]] = []
+
+    async def rewrite(
+        self, text: str, history: tuple[ChatMessage, ...] | list[ChatMessage]
+    ) -> str | None:
+        self.calls.append((text, tuple(history)))
+        return self.rewritten
+
+
 def make_entry(day: date) -> Entry:
     return Entry(
         id=uuid4(),
@@ -137,6 +172,9 @@ def build_handlers(
     updates: InMemoryProcessedUpdates | None = None,
     explain_failure: FakeExplainer | None = None,
     bank_expenses: FailingBankExpenses | None = None,
+    memory: FakeMemory | None = None,
+    follow_up: FakeFollowUp | None = None,
+    handle_message: FakeHandleMessage | None = None,
 ) -> tuple[BotHandlers, InMemoryEntryRepository, InMemoryProcessedUpdates]:
     repository = repository or InMemoryEntryRepository()
     updates = updates or InMemoryProcessedUpdates()
@@ -147,7 +185,8 @@ def build_handlers(
         repository, clock, resolver, bank_expenses
     )
     handlers = BotHandlers(
-        handle_message=HandleMessageUseCase(
+        handle_message=handle_message
+        or HandleMessageUseCase(
             DeterministicMessageParser(resolver),
             register,
             clock,
@@ -158,13 +197,20 @@ def build_handlers(
         details=GetDayDetailsUseCase(repository, clock, resolver),
         updates=updates,
         explain_failure=explain_failure,
+        memory=memory,
+        follow_up=follow_up,
     )
     return handlers, repository, updates
 
 
 def make_update(update_id: int, text: str | None = None):
     message = FakeMessage(text)
-    update = SimpleNamespace(update_id=update_id, effective_message=message)
+    update = SimpleNamespace(
+        update_id=update_id,
+        effective_message=message,
+        effective_chat=SimpleNamespace(id=update_id),
+        effective_user=SimpleNamespace(id=update_id),
+    )
     return update, message
 
 
@@ -321,3 +367,86 @@ async def test_message_replies_with_a_spending_answer() -> None:
         "(12 lançamentos)."
     ]
     assert handler.calls == [question]
+
+
+def spending_answer() -> SpendingAnswerMessage:
+    return SpendingAnswerMessage(
+        start=date(2026, 10, 1),
+        end=date(2026, 10, 22),
+        label="Uber",
+        total_cents=34250,
+        count=12,
+        category=None,
+        keywords=("uber",),
+    )
+
+
+async def test_elliptical_follow_up_uses_the_rewritten_question() -> None:
+    handle = FakeHandleMessage(spending_answer())
+    memory = FakeMemory(
+        [
+            ChatMessage(role="user", content="Quanto gastei com Uber?"),
+            ChatMessage(
+                role="assistant", content="Você gastou R$ 342,50 com Uber."
+            ),
+        ]
+    )
+    follow_up = FakeFollowUp("quanto gastei de uber no cartão?")
+    handlers, _repository, _updates = build_handlers(
+        memory=memory, follow_up=follow_up, handle_message=handle
+    )
+    update, message = make_update(20, "e no cartão?")
+
+    await handlers.message(update, context())
+
+    assert handle.calls == ["quanto gastei de uber no cartão?"]
+    assert follow_up.calls == [
+        (
+            "e no cartão?",
+            (
+                ChatMessage(role="user", content="Quanto gastei com Uber?"),
+                ChatMessage(
+                    role="assistant",
+                    content="Você gastou R$ 342,50 com Uber.",
+                ),
+            ),
+        )
+    ]
+    assert memory.appended == [
+        ("20", "user", "e no cartão?"),
+        ("20", "assistant", message.replies[0]),
+    ]
+
+
+async def test_without_history_the_message_is_not_rewritten() -> None:
+    handle = FakeHandleMessage(spending_answer())
+    memory = FakeMemory()
+    follow_up = FakeFollowUp("quanto gastei de uber no cartão?")
+    handlers, _repository, _updates = build_handlers(
+        memory=memory, follow_up=follow_up, handle_message=handle
+    )
+    update, message = make_update(21, "e no cartão?")
+
+    await handlers.message(update, context())
+
+    assert follow_up.calls == []
+    assert handle.calls == ["e no cartão?"]
+    assert memory.appended == [
+        ("21", "user", "e no cartão?"),
+        ("21", "assistant", message.replies[0]),
+    ]
+
+
+async def test_memory_none_keeps_the_previous_behavior() -> None:
+    handle = FakeHandleMessage(spending_answer())
+    follow_up = FakeFollowUp("quanto gastei de uber no cartão?")
+    handlers, _repository, _updates = build_handlers(
+        follow_up=follow_up, handle_message=handle
+    )
+    update, message = make_update(22, "e no cartão?")
+
+    await handlers.message(update, context())
+
+    assert follow_up.calls == []
+    assert handle.calls == ["e no cartão?"]
+    assert len(message.replies) == 1

@@ -24,6 +24,8 @@ def make_container() -> SimpleNamespace:
         banking=None,
         register_item=None,
         explain_failure=None,
+        memory=None,
+        follow_up=None,
     )
 
 
