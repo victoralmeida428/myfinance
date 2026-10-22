@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+from myfinance.application.dto import SpendingAnswerMessage
 from myfinance.application.errors import ProviderError
 from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
@@ -91,6 +92,18 @@ class FakeExplainer:
         if self.error is not None:
             raise self.error
         return self.reply
+
+
+class FakeHandleMessage:
+    """Returns a fixed result and records the free-form text it received."""
+
+    def __init__(self, result: SpendingAnswerMessage) -> None:
+        self._result = result
+        self.calls: list[str] = []
+
+    async def execute(self, text: str) -> SpendingAnswerMessage:
+        self.calls.append(text)
+        return self._result
 
 
 class FailingBankExpenses:
@@ -276,3 +289,35 @@ async def test_message_falls_back_when_the_explainer_fails() -> None:
     await handlers.message(update, context())
 
     assert message.replies == ["Não consegui concluir agora. Tente novamente."]
+
+
+async def test_message_replies_with_a_spending_answer() -> None:
+    answer = SpendingAnswerMessage(
+        start=date(2026, 10, 1),
+        end=date(2026, 10, 22),
+        label="Uber",
+        total_cents=34250,
+        count=12,
+        category=None,
+        keywords=("uber",),
+    )
+    handler = FakeHandleMessage(answer)
+    repository = InMemoryEntryRepository()
+    clock = FixedClock(NOW)
+    resolver = PortugueseDateResolver()
+    handlers = BotHandlers(
+        handle_message=handler,
+        summary=GetDailySummaryUseCase(repository, clock, resolver),
+        details=GetDayDetailsUseCase(repository, clock, resolver),
+        updates=InMemoryProcessedUpdates(),
+    )
+    question = "Quanto gastei com Uber?"
+    update, message = make_update(12, question)
+
+    await handlers.message(update, context())
+
+    assert message.replies == [
+        "Você gastou R$ 342,50 com Uber de 01/10/2026 a 22/10/2026 "
+        "(12 lançamentos)."
+    ]
+    assert handler.calls == [question]

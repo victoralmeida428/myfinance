@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 from myfinance.application.dto import (
     NeedsClarification,
     RegisteredMessage,
+    SpendingAnswerMessage,
     SummaryMessage,
     TopMonthMessage,
 )
@@ -40,6 +41,7 @@ from myfinance.presentation.telegram.formatting import (
     format_details,
     format_period_summary,
     format_registration,
+    format_spending_answer,
     format_summary,
     format_top_month,
 )
@@ -177,6 +179,8 @@ class BotHandlers:
                 await self._reply(update, format_summary(result.summary))
         elif isinstance(result, TopMonthMessage):
             await self._reply(update, format_top_month(result))
+        elif isinstance(result, SpendingAnswerMessage):
+            await self._reply(update, format_spending_answer(result))
         elif isinstance(result, NeedsClarification):
             await self._reply(update, result.reason)
 
