@@ -201,6 +201,18 @@ async def test_deterministic_uses_classify_keywords_for_a_plain_subject() -> Non
     assert result.keywords == ("mercado",)
 
 
+async def test_deterministic_drops_banking_words_from_keywords() -> None:
+    parser = DeterministicSpendingQueryParser()
+
+    result = await parser.parse(
+        "quanto gastei com uber e compras?", today=TODAY
+    )
+
+    assert result is not None
+    assert result.category is None
+    assert result.keywords == ("uber",)
+
+
 async def test_deterministic_returns_none_without_a_subject() -> None:
     parser = DeterministicSpendingQueryParser()
 

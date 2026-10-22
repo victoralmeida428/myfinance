@@ -189,6 +189,47 @@ async def test_pronoun_only_today_question_keeps_the_daily_summary() -> None:
     assert search.calls == []
 
 
+async def test_banking_account_question_keeps_the_summary() -> None:
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search)
+
+    result = await use_case.execute("quanto gastei na conta?")
+
+    assert isinstance(result, SummaryMessage)
+    assert search.calls == []
+
+
+async def test_card_question_keeps_the_summary() -> None:
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search)
+
+    result = await use_case.execute("quanto gastei no cartão?")
+
+    assert isinstance(result, SummaryMessage)
+    assert search.calls == []
+
+
+async def test_purchases_question_keeps_the_summary() -> None:
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search)
+
+    result = await use_case.execute("quanto gastei com compras?")
+
+    assert isinstance(result, SummaryMessage)
+    assert search.calls == []
+
+
+async def test_merchant_subject_with_card_word_still_reaches_the_search() -> None:
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search)
+
+    text = "quanto gastei com uber no cartão?"
+    result = await use_case.execute(text)
+
+    assert isinstance(result, SpendingAnswerMessage)
+    assert search.calls == [text]
+
+
 async def test_bare_expense_without_quanto_is_registered() -> None:
     search = FakeSpendingSearch(ANSWER)
     use_case, repository = build_use_case(search)
@@ -269,6 +310,14 @@ async def test_search_timeout_raises_provider_error(
         ("quanto gastei no mercado central 50", False),
         ("quanto gastei com uber 45", False),
         ("quanto gastei com uber em 12/10?", True),
+        ("quanto gastei na conta?", False),
+        ("quanto gastei no cartão?", False),
+        ("quanto gastei com compras?", False),
+        ("quanto gastei na conta em outubro?", False),
+        ("quanto gastei de fatura?", False),
+        ("quanto gastei no pix?", False),
+        ("quanto gastei com uber e compras?", True),
+        ("quanto gastei com uber no cartão?", True),
     ],
 )
 async def test_detector_edge_classes(
