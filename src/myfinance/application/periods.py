@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import date, timedelta
 
@@ -31,6 +32,25 @@ _LAST_WEEK_MARKERS = ("semana passada", "semana anterior")
 _LAST_SEVEN_DAYS_MARKERS = ("ultimos 7 dias", "ultima semana")
 _LAST_THIRTY_DAYS_MARKERS = ("ultimos 30 dias",)
 
+_MONTH_NAMES: dict[str, int] = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
+}
+_MONTH_NAME_PATTERN = re.compile(
+    r"\b(" + "|".join(_MONTH_NAMES) + r")\b"
+    r"(?:\s*(?:de\s+|/)\s*(\d{4}))?"
+)
+
 
 def _normalize(text: str) -> str:
     """Lowercase, strip accents and collapse whitespace."""
@@ -55,6 +75,38 @@ def _previous_month_range(today: date) -> tuple[date, date]:
 
 def _next_month_range(today: date) -> tuple[date, date]:
     start = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    end = (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    return start, end
+
+
+def _month_name_range(
+    normalized: str, *, today: date
+) -> tuple[date, date] | None:
+    """Resolve a named month, with or without an explicit year.
+
+    Without a year the most recent non-future occurrence is used: the current
+    year when the month is not later than ``today``'s month, otherwise the
+    previous year.
+    """
+    match = _MONTH_NAME_PATTERN.search(normalized)
+    if match is None:
+        return None
+
+    month = _MONTH_NAMES[match.group(1)]
+    explicit_year = match.group(2)
+    if explicit_year is not None:
+        year = int(explicit_year)
+        if not 1 <= year <= 9999:
+            return None
+    elif month <= today.month:
+        year = today.year
+    else:
+        year = today.year - 1
+
+    start = date(year, month, 1)
+    if year == today.year and month == today.month:
+        return start, today
+
     end = (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
     return start, end
 
@@ -104,4 +156,4 @@ def resolve_period(
     if _contains_any(normalized, _LAST_THIRTY_DAYS_MARKERS):
         return today - timedelta(days=29), today
 
-    return None
+    return _month_name_range(normalized, today=today)
