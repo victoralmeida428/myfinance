@@ -24,6 +24,37 @@ def test_current_year_markers_start_on_january_first_and_cap_at_today(
     )
 
 
+@pytest.mark.parametrize("reference", ["resumo do ano", "resumo no ano"])
+def test_current_year_phrases_start_on_january_first_and_cap_at_today(
+    reference: str,
+) -> None:
+    assert resolve_period(reference, today=TODAY) == (
+        date(2026, 1, 1),
+        TODAY,
+    )
+
+
+def test_current_week_phrase_resolves_to_monday_through_today() -> None:
+    assert resolve_period("resumo da semana", today=TODAY) == (
+        date(2026, 10, 19),
+        TODAY,
+    )
+
+
+def test_last_week_phrase_wins_over_current_week_marker() -> None:
+    assert resolve_period("resumo da semana passada", today=TODAY) == (
+        date(2026, 10, 12),
+        date(2026, 10, 18),
+    )
+
+
+def test_last_year_phrase_wins_over_current_year_marker() -> None:
+    assert resolve_period("resumo do ano passado", today=TODAY) == (
+        date(2025, 1, 1),
+        date(2025, 12, 31),
+    )
+
+
 @pytest.mark.parametrize("reference", ["ano passado", "ultimo ano"])
 def test_last_year_markers_resolve_to_the_full_previous_year(
     reference: str,

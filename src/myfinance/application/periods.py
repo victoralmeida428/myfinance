@@ -27,6 +27,7 @@ _CURRENT_WEEK_MARKERS = (
     "nessa semana",
     "nesta semana",
     "semana atual",
+    "da semana",
 )
 _LAST_WEEK_MARKERS = ("semana passada", "semana anterior")
 _LAST_SEVEN_DAYS_MARKERS = ("ultimos 7 dias", "ultima semana")
@@ -42,6 +43,8 @@ _CURRENT_YEAR_MARKERS = (
     "desse ano",
     "deste ano",
     "ano atual",
+    "do ano",
+    "no ano",
 )
 _BARE_YEAR_PATTERN = re.compile(r"(?<![\d/-])(?:19|20)\d{2}(?![\d/-])")
 
