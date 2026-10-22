@@ -72,6 +72,7 @@ __all__ = [
 ]
 
 _EXPLANATION_TIMEOUT_SECONDS = 15
+_SPENDING_SEARCH_TIMEOUT_SECONDS = 45
 
 _EXPLANATION_SYSTEM_PROMPT = (
     "Você é um assistente financeiro pessoal. Responda em português do "
@@ -120,6 +121,184 @@ def _asks_for_summary(text: str) -> bool:
 def _asks_for_top_month(text: str) -> bool:
     normalized = _strip_accents(text)
     return any(re.search(pattern, normalized) for pattern in _TOP_MONTH_PATTERNS)
+
+
+_SPENDING_QUERY_STOPWORDS = frozenset(
+    {
+        "quanto",
+        "quantos",
+        "qual",
+        "quais",
+        "gastei",
+        "gasto",
+        "gastos",
+        "gaste",
+        "paguei",
+        "pago",
+        "pagos",
+        "comprei",
+        "em",
+        "com",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "de",
+        "do",
+        "da",
+        "dos",
+        "das",
+        "esse",
+        "essa",
+        "este",
+        "esta",
+        "nesse",
+        "nessa",
+        "neste",
+        "nesta",
+        "mes",
+        "semana",
+        "hoje",
+        "ontem",
+        "amanha",
+        "passado",
+        "passada",
+        "atual",
+        "ultimo",
+        "ultima",
+        "dia",
+        "dias",
+        "por",
+        "para",
+        "o",
+        "a",
+        "os",
+        "as",
+        "e",
+        "que",
+        "foi",
+        "foram",
+        "meu",
+        "minha",
+        "meus",
+        "minhas",
+        "eu",
+        "tu",
+        "voce",
+        "voces",
+        "ele",
+        "ela",
+        "eles",
+        "elas",
+        "gente",
+        "deu",
+        "deram",
+        "ficou",
+        "ficaram",
+        "custou",
+        "custaram",
+        "custa",
+        "custam",
+        "valeu",
+        "valeram",
+        "saiu",
+        "sairam",
+        "entrou",
+        "entraram",
+        "sera",
+        "serao",
+        "vai",
+        "vao",
+        "vou",
+        "vamos",
+        "tenho",
+        "tem",
+        "temos",
+        "tinha",
+        "tinham",
+        "era",
+        "eram",
+        "sou",
+        "somos",
+        "sao",
+        "gastou",
+        "gastaram",
+        "pagou",
+        "pagaram",
+        "comprou",
+        "compraram",
+    }
+)
+
+_MONTH_NAMES = frozenset(
+    {
+        "janeiro",
+        "fevereiro",
+        "marco",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+    }
+)
+
+_TOKEN_PUNCTUATION = ".,!?;:\"'()[]{}…"
+
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_DATE_SPAN_RE = re.compile(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b")
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_AMOUNT_RE = re.compile(
+    r"(?:R\$\s*)?(?<![\w.,/-])"
+    r"(?:\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d+)?)"
+    r"(?!\w|[.,]\d|[-/])",
+    re.IGNORECASE,
+)
+
+
+def _has_explicit_amount(text: str) -> bool:
+    """Return whether ``text`` carries a money-like amount outside dates.
+
+    Dates and four-digit years are masked first, so an explicit year or
+    ``DD/MM`` reference never reads as a monetary value.
+    """
+    masked = _ISO_DATE_RE.sub(" ", text)
+    masked = _DATE_SPAN_RE.sub(" ", masked)
+    masked = _YEAR_RE.sub(" ", masked)
+    return _AMOUNT_RE.search(masked) is not None
+
+
+def _looks_like_spending_query(text: str) -> bool:
+    """Return whether ``text`` asks a spending question with a concrete subject.
+
+    Period-only questions ("quanto gastei hoje?") stay summaries, and
+    registration messages without ``quanto`` never reach the spending search.
+    """
+    normalized = _strip_accents(text)
+    if _asks_for_top_month(text):
+        return False
+    if not re.search(r"\bquanto\b", normalized):
+        return False
+    has_subject = False
+    for raw in normalized.split():
+        token = raw.strip(_TOKEN_PUNCTUATION)
+        if not token:
+            continue
+        if token in _SPENDING_QUERY_STOPWORDS:
+            continue
+        if token in _MONTH_NAMES:
+            continue
+        if any(character.isdigit() for character in token):
+            continue
+        has_subject = True
+        break
+    if not has_subject:
+        return False
+    return not _has_explicit_amount(text)
 
 
 def _shift_month(first_day: date, delta: int) -> date:
@@ -496,6 +675,7 @@ class HandleMessageUseCase:
         period_summary: GetPeriodSummaryUseCase | None = None,
         summary_gate: SummaryIntentGate | None = None,
         top_month: GetTopSpendingMonthUseCase | None = None,
+        spending_search: SearchSpendingUseCase | None = None,
     ) -> None:
         self._parser = parser
         self._register = register
@@ -505,8 +685,22 @@ class HandleMessageUseCase:
         self._period_summary = period_summary
         self._summary_gate = summary_gate
         self._top_month = top_month
+        self._spending_search = spending_search
 
     async def execute(self, text: str) -> HandleMessageResult:
+        if self._spending_search is not None and _looks_like_spending_query(text):
+            try:
+                answer = await asyncio.wait_for(
+                    self._spending_search.execute(text),
+                    timeout=_SPENDING_SEARCH_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise ProviderError(
+                    "A consulta de gastos demorou demais. Tente novamente."
+                ) from exc
+            if answer is not None:
+                return answer
+
         decision = None
         if self._summary_gate is not None:
             try:
