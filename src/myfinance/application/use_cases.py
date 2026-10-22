@@ -13,8 +13,11 @@ from uuid import UUID, uuid4
 from myfinance.application.dto import (
     AccountsAnswer,
     BankingAnswer,
+    CategoryPlan,
+    CutSuggestion,
     HandleMessageResult,
     IdentityAnswer,
+    MerchantSpend,
     MonthlyExpense,
     NeedsClarification,
     NoPluggyItem,
@@ -22,6 +25,7 @@ from myfinance.application.dto import (
     RegisteredMessage,
     RegistrationResult,
     SpendingAnswerMessage,
+    SpendingPlanMessage,
     SpendingQuery,
     SummaryMessage,
     TopMonthMessage,
@@ -42,6 +46,7 @@ from myfinance.application.ports import (
     LanguageModel,
     MessageParser,
     PluggyItemRepository,
+    SpendingPlanNarrator,
     SpendingQueryParser,
     SummaryIntentGate,
 )
@@ -63,6 +68,7 @@ __all__ = [
     "GetDailySummaryUseCase",
     "GetDayDetailsUseCase",
     "GetPeriodSummaryUseCase",
+    "GetSpendingPlanUseCase",
     "GetTopSpendingMonthUseCase",
     "HandleBankingQueryUseCase",
     "HandleMessageUseCase",
@@ -73,6 +79,38 @@ __all__ = [
 
 _EXPLANATION_TIMEOUT_SECONDS = 15
 _SPENDING_SEARCH_TIMEOUT_SECONDS = 45
+_SPENDING_PLAN_TIMEOUT_SECONDS = 60
+
+_PLAN_PATTERNS = (
+    r"\bplano de gastos?\b",
+    r"\bplanejamento\b",
+    r"\bonde\s+(?:posso\s+)?(?:cortar|diminuir|reduzir)\b",
+    r"\bcomo\s+(?:posso\s+)?economizar\b",
+    r"\bme\s+ajuda(?:r)?\s+a\s+economizar\b",
+    r"\bdicas?\s+(?:para|de)\s+economizar\b",
+    r"\breduzir\s+(?:meus\s+)?gastos\b",
+    r"\bcortar\s+(?:meus\s+)?gastos\b",
+)
+
+_DISCRETIONARY_CATEGORIES = frozenset(
+    {
+        Category.ALIMENTACAO,
+        Category.TRANSPORTE,
+        Category.LAZER,
+        Category.OUTROS,
+    }
+)
+
+# Longest first, so "transferencia enviada pelo pix" wins over "pix".
+_MERCHANT_PREFIXES = (
+    "transferencia enviada pelo pix",
+    "transferencia enviada",
+    "compra no debito",
+    "pagamento efetuado",
+    "pagamento",
+    "pix",
+    "compra",
+)
 
 _EXPLANATION_SYSTEM_PROMPT = (
     "Você é um assistente financeiro pessoal. Responda em português do "
@@ -121,6 +159,90 @@ def _asks_for_summary(text: str) -> bool:
 def _asks_for_top_month(text: str) -> bool:
     normalized = _strip_accents(text)
     return any(re.search(pattern, normalized) for pattern in _TOP_MONTH_PATTERNS)
+
+
+def _asks_for_spending_plan(text: str) -> bool:
+    normalized = _strip_accents(text)
+    return any(re.search(pattern, normalized) for pattern in _PLAN_PATTERNS)
+
+
+def _delta_percent(current_cents: int, previous_cents: int) -> int | None:
+    """Return the percentage change, or ``None`` without a previous base."""
+    if previous_cents <= 0:
+        return None
+    return round((current_cents - previous_cents) * 100 / previous_cents)
+
+
+def _clean_merchant(description: str) -> str:
+    """Strip bank transaction prefixes and normalise the merchant name."""
+    text = description.strip()
+    if "|" in text:
+        head, _, tail = text.partition("|")
+        if _strip_accents(head).strip(" -") in _MERCHANT_PREFIXES:
+            text = tail
+    return _strip_accents(text).strip(" -|")
+
+
+def _expense_items(
+    entries: Sequence[Entry], bank_expenses: Sequence[BankExpense]
+) -> list[tuple[date, int, Category, str]]:
+    """Combine manual and bank spends, dropping forecasts and duplicates.
+
+    A manual entry duplicates a bank expense when both share the same day and
+    amount, so the bank row wins and the spend is counted once.
+    """
+    bank_keys = {
+        (expense.day, expense.amount_cents) for expense in bank_expenses
+    }
+    items: list[tuple[date, int, Category, str]] = []
+    for entry in entries:
+        if entry.kind is EntryKind.FORECAST:
+            continue
+        if (entry.day, entry.amount.cents) in bank_keys:
+            continue
+        items.append(
+            (entry.day, entry.amount.cents, entry.category, entry.description)
+        )
+    for expense in bank_expenses:
+        items.append(
+            (
+                expense.day,
+                expense.amount_cents,
+                expense.category,
+                expense.description,
+            )
+        )
+    return items
+
+
+def _distribute_cuts(
+    categories: Sequence[tuple[Category, int]], target_cents: int
+) -> tuple[CutSuggestion, ...]:
+    """Split ``target_cents`` proportionally, forcing the sum to match it."""
+    if not categories or target_cents <= 0:
+        return ()
+    total_cents = sum(cents for _, cents in categories)
+    if total_cents <= 0:
+        return ()
+
+    cuts: list[CutSuggestion] = []
+    allocated = 0
+    for index, (category, cents) in enumerate(categories):
+        is_last = index == len(categories) - 1
+        cut_cents = (
+            target_cents - allocated
+            if is_last
+            else round(target_cents * cents / total_cents)
+        )
+        allocated += cut_cents
+        cuts.append(
+            CutSuggestion(
+                label=category.label,
+                current_cents=cents,
+                cut_cents=cut_cents,
+            )
+        )
+    return tuple(cuts)
 
 
 _SPENDING_QUERY_STOPWORDS = frozenset(
@@ -666,6 +788,127 @@ class SearchSpendingUseCase:
         )
 
 
+class GetSpendingPlanUseCase:
+    """Build a grounded savings plan from the last analyzed spending window."""
+
+    def __init__(
+        self,
+        entries: EntryRepository,
+        bank_expenses: BankExpenseProvider | None,
+        clock: Clock,
+        narrator: SpendingPlanNarrator | None = None,
+    ) -> None:
+        self._entries = entries
+        self._bank_expenses = bank_expenses
+        self._clock = clock
+        self._narrator = narrator
+
+    async def execute(self, text: str = "") -> SpendingPlanMessage:
+        today = self._clock.today()
+        period = resolve_period(text, today=today) if text.strip() else None
+        if period is None:
+            last_day = today.replace(day=1) - timedelta(days=1)
+            start = last_day.replace(day=1)
+            end = last_day
+        else:
+            start, end = period
+
+        length = (end - start).days + 1
+        previous_end = start - timedelta(days=1)
+        previous_start = start - timedelta(days=length)
+
+        entries = await self._entries.list_between(start, end)
+        previous_entries = await self._entries.list_between(
+            previous_start, previous_end
+        )
+        bank_expenses: Sequence[BankExpense] = ()
+        previous_bank_expenses: Sequence[BankExpense] = ()
+        if self._bank_expenses is not None:
+            bank_expenses = await self._bank_expenses.expenses(start, end)
+            previous_bank_expenses = await self._bank_expenses.expenses(
+                previous_start, previous_end
+            )
+
+        items = _expense_items(entries, bank_expenses)
+        previous_items = _expense_items(
+            previous_entries, previous_bank_expenses
+        )
+
+        category_totals: dict[Category, int] = {}
+        for _, cents, category, _ in items:
+            category_totals[category] = category_totals.get(category, 0) + cents
+        previous_totals: dict[Category, int] = {}
+        for _, cents, category, _ in previous_items:
+            previous_totals[category] = previous_totals.get(category, 0) + cents
+
+        total_cents = sum(category_totals.values())
+        previous_total_cents = sum(previous_totals.values())
+
+        categories = tuple(
+            CategoryPlan(
+                category=category,
+                total_cents=cents,
+                share_percent=(
+                    round(cents * 100 / total_cents) if total_cents else 0
+                ),
+                previous_cents=previous_totals.get(category, 0),
+                delta_percent=_delta_percent(
+                    cents, previous_totals.get(category, 0)
+                ),
+            )
+            for category, cents in sorted(
+                category_totals.items(),
+                key=lambda item: (-item[1], item[0].value),
+            )
+        )
+
+        grouped: dict[str, list[int]] = {}
+        for _, cents, _, description in items:
+            name = _clean_merchant(description)
+            if not name:
+                continue
+            bucket = grouped.setdefault(name, [0, 0])
+            bucket[0] += cents
+            bucket[1] += 1
+        merchants = tuple(
+            MerchantSpend(name=name, total_cents=total, count=count)
+            for name, (total, count) in sorted(
+                grouped.items(), key=lambda item: (-item[1][0], item[0])
+            )[:5]
+        )
+
+        target_cents = round(total_cents * 10 / 100)
+        discretionary = sorted(
+            (
+                (category, cents)
+                for category, cents in category_totals.items()
+                if category in _DISCRETIONARY_CATEGORIES and cents > 0
+            ),
+            key=lambda item: (-item[1], item[0].value),
+        )[:3]
+        cuts = _distribute_cuts(discretionary, target_cents)
+
+        plan = SpendingPlanMessage(
+            start=start,
+            end=end,
+            total_cents=total_cents,
+            count=len(items),
+            previous_total_cents=previous_total_cents,
+            categories=categories,
+            merchants=merchants,
+            target_cents=target_cents,
+            cuts=cuts,
+            narrative=None,
+        )
+        if self._narrator is None:
+            return plan
+        try:
+            narrative = await self._narrator.narrate(plan)
+        except ProviderError:
+            narrative = None
+        return replace(plan, narrative=narrative)
+
+
 class GetDayDetailsUseCase:
     """Return every entry registered for a referenced day."""
 
@@ -701,6 +944,7 @@ class HandleMessageUseCase:
         summary_gate: SummaryIntentGate | None = None,
         top_month: GetTopSpendingMonthUseCase | None = None,
         spending_search: SearchSpendingUseCase | None = None,
+        spending_plan: GetSpendingPlanUseCase | None = None,
     ) -> None:
         self._parser = parser
         self._register = register
@@ -711,6 +955,7 @@ class HandleMessageUseCase:
         self._summary_gate = summary_gate
         self._top_month = top_month
         self._spending_search = spending_search
+        self._spending_plan = spending_plan
 
     async def execute(self, text: str) -> HandleMessageResult:
         if self._spending_search is not None and _looks_like_spending_query(text):
@@ -725,6 +970,17 @@ class HandleMessageUseCase:
                 ) from exc
             if answer is not None:
                 return answer
+
+        if self._spending_plan is not None and _asks_for_spending_plan(text):
+            try:
+                return await asyncio.wait_for(
+                    self._spending_plan.execute(text),
+                    timeout=_SPENDING_PLAN_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise ProviderError(
+                    "O plano de gastos demorou demais. Tente novamente."
+                ) from exc
 
         decision = None
         if self._summary_gate is not None:

@@ -21,6 +21,7 @@ from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
+    GetSpendingPlanUseCase,
     GetTopSpendingMonthUseCase,
     HandleBankingQueryUseCase,
     HandleMessageUseCase,
@@ -46,6 +47,9 @@ from myfinance.infrastructure.parsing.gate import JevLLMGate
 from myfinance.infrastructure.parsing.llm import OpenCodeMessageParser
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
+)
+from myfinance.infrastructure.parsing.spending_plan import (
+    OpenCodeSpendingPlanNarrator,
 )
 from myfinance.infrastructure.parsing.spending_query import (
     DeterministicSpendingQueryParser,
@@ -155,6 +159,15 @@ def build_container(settings: Settings) -> BotContainer:
         resolver,
         spending_parser,
     )
+    narrator = (
+        OpenCodeSpendingPlanNarrator(model) if model is not None else None
+    )
+    spending_plan = GetSpendingPlanUseCase(
+        entries,
+        bank_expenses,
+        clock,
+        narrator,
+    )
 
     memory = SqliteConversationMemory(database)
     follow_up = (
@@ -174,6 +187,7 @@ def build_container(settings: Settings) -> BotContainer:
             summary_gate,
             top_month,
             spending_search,
+            spending_plan,
         ),
         summary=summary,
         details=GetDayDetailsUseCase(entries, clock, resolver),

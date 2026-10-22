@@ -20,6 +20,7 @@ from myfinance.application.dto import (
     NeedsClarification,
     RegisteredMessage,
     SpendingAnswerMessage,
+    SpendingPlanMessage,
     SummaryMessage,
     TopMonthMessage,
 )
@@ -51,6 +52,7 @@ from myfinance.presentation.telegram.formatting import (
     format_period_summary,
     format_registration,
     format_spending_answer,
+    format_spending_plan,
     format_summary,
     format_top_month,
 )
@@ -267,6 +269,8 @@ class BotHandlers:
             await reply_and_remember(format_top_month(result))
         elif isinstance(result, SpendingAnswerMessage):
             await reply_and_remember(format_spending_answer(result))
+        elif isinstance(result, SpendingPlanMessage):
+            await reply_and_remember(format_spending_plan(result))
         elif isinstance(result, NeedsClarification):
             await reply_and_remember(result.reason)
 

@@ -5,7 +5,10 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
-from myfinance.application.dto import SpendingAnswerMessage
+from myfinance.application.dto import (
+    SpendingAnswerMessage,
+    SpendingPlanMessage,
+)
 from myfinance.application.errors import ProviderError
 from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
@@ -26,6 +29,7 @@ from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
 )
 from myfinance.presentation.telegram.commands import HELP_TEXT
+from myfinance.presentation.telegram.formatting import format_spending_plan
 from myfinance.presentation.telegram.handlers import BotHandlers
 
 TODAY = date(2026, 10, 20)
@@ -98,11 +102,13 @@ class FakeExplainer:
 class FakeHandleMessage:
     """Returns a fixed result and records the free-form text it received."""
 
-    def __init__(self, result: SpendingAnswerMessage) -> None:
+    def __init__(self, result: SpendingAnswerMessage | SpendingPlanMessage) -> None:
         self._result = result
         self.calls: list[str] = []
 
-    async def execute(self, text: str) -> SpendingAnswerMessage:
+    async def execute(
+        self, text: str
+    ) -> SpendingAnswerMessage | SpendingPlanMessage:
         self.calls.append(text)
         return self._result
 
@@ -450,3 +456,39 @@ async def test_memory_none_keeps_the_previous_behavior() -> None:
     assert follow_up.calls == []
     assert handle.calls == ["e no cartão?"]
     assert len(message.replies) == 1
+
+
+def spending_plan() -> SpendingPlanMessage:
+    return SpendingPlanMessage(
+        start=date(2026, 9, 1),
+        end=date(2026, 9, 30),
+        total_cents=49000,
+        count=7,
+        previous_total_cents=32000,
+        categories=(),
+        merchants=(),
+        target_cents=4900,
+        cuts=(),
+        narrative=None,
+    )
+
+
+async def test_message_replies_with_the_spending_plan_and_stores_it() -> None:
+    plan = spending_plan()
+    handle = FakeHandleMessage(plan)
+    memory = FakeMemory()
+    handlers, _repository, _updates = build_handlers(
+        handle_message=handle, memory=memory
+    )
+    question = "onde posso cortar gastos?"
+    update, message = make_update(30, question)
+
+    await handlers.message(update, context())
+
+    expected = format_spending_plan(plan)
+    assert message.replies == [expected]
+    assert handle.calls == [question]
+    assert memory.appended == [
+        ("30", "user", question),
+        ("30", "assistant", expected),
+    ]

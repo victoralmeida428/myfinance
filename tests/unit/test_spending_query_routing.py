@@ -11,6 +11,7 @@ from myfinance.application import use_cases as use_cases_module
 from myfinance.application.dto import (
     RegisteredMessage,
     SpendingAnswerMessage,
+    SpendingPlanMessage,
     SummaryMessage,
     TopMonthMessage,
 )
@@ -42,6 +43,19 @@ ANSWER = SpendingAnswerMessage(
     count=1,
     category=None,
     keywords=("uber",),
+)
+
+PLAN = SpendingPlanMessage(
+    start=date(2026, 9, 1),
+    end=date(2026, 9, 30),
+    total_cents=49000,
+    count=7,
+    previous_total_cents=32000,
+    categories=(),
+    merchants=(),
+    target_cents=4900,
+    cuts=(),
+    narrative=None,
 )
 
 
@@ -105,10 +119,29 @@ class FakeSpendingSearch:
         return self._answer
 
 
+class FakeSpendingPlan:
+    def __init__(
+        self,
+        plan: SpendingPlanMessage = PLAN,
+        *,
+        delay: float = 0.0,
+    ) -> None:
+        self._plan = plan
+        self._delay = delay
+        self.calls: list[str] = []
+
+    async def execute(self, text: str = "") -> SpendingPlanMessage:
+        self.calls.append(text)
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return self._plan
+
+
 def build_use_case(
     search: FakeSpendingSearch | None = None,
     repository: InMemoryEntryRepository | None = None,
     summary_gate: FakeSummaryGate | None = None,
+    plan: FakeSpendingPlan | None = None,
 ) -> tuple[HandleMessageUseCase, InMemoryEntryRepository]:
     repository = repository or InMemoryEntryRepository()
     clock = FixedClock(NOW)
@@ -123,6 +156,7 @@ def build_use_case(
         summary_gate,
         GetTopSpendingMonthUseCase(repository, FakeBankExpenses(), clock),
         search,
+        plan,
     )
     return use_case, repository
 
@@ -340,3 +374,66 @@ async def test_year_period_subject_query_is_answered_by_the_search() -> None:
 
     assert isinstance(result, SpendingAnswerMessage)
     assert search.calls == [text]
+
+
+async def test_savings_question_is_answered_by_the_spending_plan() -> None:
+    plan = FakeSpendingPlan()
+    use_case, _ = build_use_case(plan=plan)
+
+    result = await use_case.execute("onde posso cortar gastos?")
+
+    assert result == PLAN
+    assert plan.calls == ["onde posso cortar gastos?"]
+
+
+async def test_how_to_save_question_is_answered_by_the_spending_plan() -> None:
+    plan = FakeSpendingPlan()
+    use_case, _ = build_use_case(plan=plan)
+
+    result = await use_case.execute("como economizar mais?")
+
+    assert result == PLAN
+    assert plan.calls == ["como economizar mais?"]
+
+
+async def test_plan_request_is_answered_by_the_spending_plan() -> None:
+    plan = FakeSpendingPlan()
+    use_case, _ = build_use_case(plan=plan)
+
+    result = await use_case.execute("faça um plano de gastos")
+
+    assert result == PLAN
+    assert plan.calls == ["faça um plano de gastos"]
+
+
+async def test_period_summary_question_is_not_a_spending_plan() -> None:
+    plan = FakeSpendingPlan()
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search, plan=plan)
+
+    result = await use_case.execute("quanto gastei no mês passado?")
+
+    assert isinstance(result, SummaryMessage)
+    assert plan.calls == []
+
+
+async def test_bare_expense_never_reaches_the_spending_plan() -> None:
+    plan = FakeSpendingPlan()
+    use_case, repository = build_use_case(plan=plan)
+
+    result = await use_case.execute("gastei 45")
+
+    assert isinstance(result, RegisteredMessage)
+    assert plan.calls == []
+    assert len(repository.entries) == 1
+
+
+async def test_plan_timeout_raises_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(use_cases_module, "_SPENDING_PLAN_TIMEOUT_SECONDS", 0.01)
+    plan = FakeSpendingPlan(delay=1.0)
+    use_case, _ = build_use_case(plan=plan)
+
+    with pytest.raises(ProviderError, match="plano de gastos demorou demais"):
+        await use_case.execute("onde posso cortar gastos?")

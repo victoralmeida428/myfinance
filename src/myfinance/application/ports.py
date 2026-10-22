@@ -7,7 +7,11 @@ from datetime import date, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from myfinance.application.dto import ParsedMessage, SpendingQuery
+from myfinance.application.dto import (
+    ParsedMessage,
+    SpendingPlanMessage,
+    SpendingQuery,
+)
 from myfinance.domain.banking import (
     BankAccount,
     BankExpense,
@@ -38,6 +42,7 @@ __all__ = [
     "MessageParser",
     "PluggyItemRepository",
     "ProcessedUpdateRepository",
+    "SpendingPlanNarrator",
     "SpendingQueryParser",
     "SummaryIntentGate",
 ]
@@ -135,6 +140,16 @@ class SpendingQueryParser(Protocol):
     """Extracts a spending query from a free-form user message."""
 
     async def parse(self, text: str, *, today: date) -> SpendingQuery | None: ...
+
+
+class SpendingPlanNarrator(Protocol):
+    """Writes a short narrative around an already computed spending plan.
+
+    Implementations only receive the computed ``SpendingPlanMessage`` and must
+    never change its numbers.
+    """
+
+    async def narrate(self, plan: SpendingPlanMessage) -> str | None: ...
 
 
 class DateResolver(Protocol):
