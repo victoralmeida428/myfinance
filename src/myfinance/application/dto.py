@@ -16,8 +16,11 @@ from myfinance.domain.summary import CategoryBalance, DailySummary, PeriodSummar
 __all__ = [
     "AccountsAnswer",
     "BankingAnswer",
+    "CategoryPlan",
+    "CutSuggestion",
     "HandleMessageResult",
     "IdentityAnswer",
+    "MerchantSpend",
     "MonthlyExpense",
     "NeedsClarification",
     "NoPluggyItem",
@@ -25,6 +28,7 @@ __all__ = [
     "RegisteredMessage",
     "RegistrationResult",
     "SpendingAnswerMessage",
+    "SpendingPlanMessage",
     "SpendingQuery",
     "SummaryMessage",
     "TopMonthMessage",
@@ -114,11 +118,57 @@ class SpendingAnswerMessage:
     keywords: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CategoryPlan:
+    """One category's spending in the analyzed window and the one before it."""
+
+    category: Category
+    total_cents: int
+    share_percent: int
+    previous_cents: int
+    delta_percent: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class MerchantSpend:
+    """A merchant (cleaned bank description) and how much was spent there."""
+
+    name: str
+    total_cents: int
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CutSuggestion:
+    """A proposed cut in one discretionary category."""
+
+    label: str
+    current_cents: int
+    cut_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class SpendingPlanMessage:
+    """A grounded savings plan built from the previous window's spending."""
+
+    start: date
+    end: date
+    total_cents: int
+    count: int
+    previous_total_cents: int
+    categories: tuple[CategoryPlan, ...]
+    merchants: tuple[MerchantSpend, ...]
+    target_cents: int
+    cuts: tuple[CutSuggestion, ...]
+    narrative: str | None
+
+
 HandleMessageResult: TypeAlias = (
     RegisteredMessage
     | SummaryMessage
     | TopMonthMessage
     | SpendingAnswerMessage
+    | SpendingPlanMessage
     | NeedsClarification
 )
 

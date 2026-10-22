@@ -18,6 +18,7 @@ from myfinance.application.dto import (
     NoPluggyItem,
     RegistrationResult,
     SpendingAnswerMessage,
+    SpendingPlanMessage,
     TopMonthMessage,
     TransactionsAnswer,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "format_period_summary",
     "format_registration",
     "format_spending_answer",
+    "format_spending_plan",
     "format_summary",
     "format_top_month",
     "mask_document",
@@ -217,6 +219,80 @@ def format_spending_answer(message: SpendingAnswerMessage) -> str:
         f"Você gastou {format_brl(message.total_cents)} com "
         f"{message.label} {period} ({message.count} {noun})."
     )
+
+
+def format_spending_plan(plan: SpendingPlanMessage) -> str:
+    """Render a grounded savings plan from its computed numbers only."""
+    if plan.start.year == plan.end.year and plan.start.month == plan.end.month:
+        header = (
+            f"Plano de gastos de "
+            f"{_MONTH_NAMES[plan.start.month - 1]}/{plan.start.year}"
+        )
+    else:
+        header = (
+            f"Plano de gastos de {format_date(plan.start)} a "
+            f"{format_date(plan.end)}"
+        )
+
+    if plan.count == 0:
+        blocks = [header, "Nenhum gasto no período analisado."]
+        if plan.narrative:
+            blocks.append(plan.narrative)
+        return "\n\n".join(blocks)
+
+    noun = "lançamento" if plan.count == 1 else "lançamentos"
+    total_line = f"Total: {format_brl(plan.total_cents)} ({plan.count} {noun})"
+    if plan.previous_total_cents > 0:
+        overall_delta = round(
+            (plan.total_cents - plan.previous_total_cents)
+            * 100
+            / plan.previous_total_cents
+        )
+        total_line += (
+            f" | {_format_delta(overall_delta)} vs período anterior "
+            f"({format_brl(plan.previous_total_cents)})"
+        )
+
+    blocks = [f"{header}\n{total_line}"]
+
+    if plan.categories:
+        category_lines = ["Top categorias:"]
+        for category in plan.categories[:3]:
+            detail = (
+                f"{category.category.label}: "
+                f"{format_brl(category.total_cents)} "
+                f"({category.share_percent}% do total, "
+            )
+            if category.delta_percent is None:
+                detail += "sem base anterior)"
+            else:
+                detail += (
+                    f"{_format_delta(category.delta_percent)} "
+                    "vs período anterior)"
+                )
+            category_lines.append(f"- {detail}")
+        blocks.append("\n".join(category_lines))
+
+    if plan.cuts:
+        cut_lines = ["Cortes sugeridos:"]
+        for cut in plan.cuts[:3]:
+            cut_lines.append(
+                f"- {cut.label}: {format_brl(cut.cut_cents)} de "
+                f"{format_brl(cut.current_cents)}"
+            )
+        blocks.append("\n".join(cut_lines))
+
+    blocks.append(f"Meta de economia: {format_brl(plan.target_cents)}")
+    if plan.narrative:
+        blocks.append(plan.narrative)
+    return "\n\n".join(blocks)
+
+
+def _format_delta(delta_percent: int) -> str:
+    """Render a signed percentage, keeping zero unsigned."""
+    if delta_percent > 0:
+        return f"+{delta_percent}%"
+    return f"{delta_percent}%"
 
 
 def format_summary(summary: DailySummary) -> str:

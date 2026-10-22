@@ -4,8 +4,12 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from myfinance.application.dto import (
+    CategoryPlan,
+    CutSuggestion,
+    MerchantSpend,
     RegistrationResult,
     SpendingAnswerMessage,
+    SpendingPlanMessage,
 )
 from myfinance.domain.banking import BankExpense
 from myfinance.domain.categories import Category
@@ -18,6 +22,7 @@ from myfinance.presentation.telegram.formatting import (
     format_details,
     format_registration,
     format_spending_answer,
+    format_spending_plan,
     format_summary,
 )
 
@@ -249,4 +254,108 @@ def test_format_spending_answer_for_a_same_day_range() -> None:
 
     assert text == (
         "Você gastou R$ 90,00 com Uber em 22/10/2026 (3 lançamentos)."
+    )
+
+
+def make_spending_plan(
+    *, narrative: str | None = None, count: int = 7
+) -> SpendingPlanMessage:
+    return SpendingPlanMessage(
+        start=date(2026, 9, 1),
+        end=date(2026, 9, 30),
+        total_cents=49000 if count else 0,
+        count=count,
+        previous_total_cents=32000 if count else 0,
+        categories=(
+            (
+                CategoryPlan(
+                    category=Category.TRANSPORTE,
+                    total_cents=20000,
+                    share_percent=41,
+                    previous_cents=10000,
+                    delta_percent=100,
+                ),
+                CategoryPlan(
+                    category=Category.ALIMENTACAO,
+                    total_cents=15000,
+                    share_percent=31,
+                    previous_cents=8000,
+                    delta_percent=88,
+                ),
+                CategoryPlan(
+                    category=Category.LAZER,
+                    total_cents=5000,
+                    share_percent=10,
+                    previous_cents=5000,
+                    delta_percent=0,
+                ),
+            )
+            if count
+            else ()
+        ),
+        merchants=(
+            MerchantSpend(
+                name="drogaria nova valqueir", total_cents=15000, count=2
+            ),
+        )
+        if count
+        else (),
+        target_cents=4900 if count else 0,
+        cuts=(
+            (
+                CutSuggestion(
+                    label="Transporte", current_cents=20000, cut_cents=2450
+                ),
+                CutSuggestion(
+                    label="Alimentação", current_cents=15000, cut_cents=1838
+                ),
+                CutSuggestion(
+                    label="Lazer", current_cents=5000, cut_cents=612
+                ),
+            )
+            if count
+            else ()
+        ),
+        narrative=narrative,
+    )
+
+
+def test_format_spending_plan_renders_the_computed_numbers() -> None:
+    text = format_spending_plan(make_spending_plan())
+
+    assert text == (
+        "Plano de gastos de setembro/2026\n"
+        "Total: R$ 490,00 (7 lançamentos) | +53% vs período anterior "
+        "(R$ 320,00)\n"
+        "\n"
+        "Top categorias:\n"
+        "- Transporte: R$ 200,00 (41% do total, +100% vs período anterior)\n"
+        "- Alimentação: R$ 150,00 (31% do total, +88% vs período anterior)\n"
+        "- Lazer: R$ 50,00 (10% do total, 0% vs período anterior)\n"
+        "\n"
+        "Cortes sugeridos:\n"
+        "- Transporte: R$ 24,50 de R$ 200,00\n"
+        "- Alimentação: R$ 18,38 de R$ 150,00\n"
+        "- Lazer: R$ 6,12 de R$ 50,00\n"
+        "\n"
+        "Meta de economia: R$ 49,00"
+    )
+
+
+def test_format_spending_plan_appends_the_narrative() -> None:
+    text = format_spending_plan(
+        make_spending_plan(narrative="Corte transporte e lazer.")
+    )
+
+    assert text.endswith(
+        "Meta de economia: R$ 49,00\n\nCorte transporte e lazer."
+    )
+
+
+def test_format_spending_plan_for_an_empty_window() -> None:
+    text = format_spending_plan(make_spending_plan(count=0))
+
+    assert text == (
+        "Plano de gastos de setembro/2026\n\n"
+        "Nenhum gasto no período analisado."
     )

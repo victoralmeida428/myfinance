@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from myfinance.domain.banking import (
@@ -23,6 +24,7 @@ from myfinance.domain.banking import (
 )
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
+from myfinance.domain.models import ChatMessage
 from myfinance.domain.money import Money
 
 _SCHEMA = """
@@ -82,6 +84,16 @@ CREATE TABLE IF NOT EXISTS pluggy_identity (
     birth_date TEXT,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_chat ON conversation_messages(chat_id, id);
 """
 
 
@@ -221,6 +233,86 @@ class SqliteProcessedUpdateRepository:
                     (update_id, datetime.now(UTC).isoformat()),
                 )
                 return cursor.rowcount == 1
+
+
+class SqliteConversationMemory:
+    """Keeps the last exchanges of each chat in SQLite."""
+
+    _MAX_ROWS = 10
+
+    def __init__(self, database: SqliteDatabase) -> None:
+        self._database = database
+
+    async def append(
+        self, chat_id: str, role: Literal["user", "assistant"], content: str
+    ) -> None:
+        await asyncio.to_thread(self._append, chat_id, role, content)
+
+    async def recent(
+        self, chat_id: str, *, exchanges: int = 5
+    ) -> Sequence[ChatMessage]:
+        return await asyncio.to_thread(self._recent, chat_id, exchanges)
+
+    async def clear(self, chat_id: str) -> None:
+        await asyncio.to_thread(self._clear, chat_id)
+
+    def _append(
+        self, chat_id: str, role: Literal["user", "assistant"], content: str
+    ) -> None:
+        with closing(self._database.connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO conversation_messages (
+                        chat_id, role, content, created_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        chat_id,
+                        role,
+                        content,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM conversation_messages
+                    WHERE chat_id = ?
+                      AND id NOT IN (
+                          SELECT id FROM conversation_messages
+                          WHERE chat_id = ?
+                          ORDER BY id DESC
+                          LIMIT ?
+                      )
+                    """,
+                    (chat_id, chat_id, self._MAX_ROWS),
+                )
+
+    def _recent(self, chat_id: str, exchanges: int) -> Sequence[ChatMessage]:
+        limit = 2 * max(exchanges, 1)
+        with closing(self._database.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT role, content
+                FROM conversation_messages
+                WHERE chat_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (chat_id, limit),
+            ).fetchall()
+        return tuple(
+            ChatMessage(role=row["role"], content=row["content"])
+            for row in reversed(rows)
+        )
+
+    def _clear(self, chat_id: str) -> None:
+        with closing(self._database.connect()) as connection:
+            with connection:
+                connection.execute(
+                    "DELETE FROM conversation_messages WHERE chat_id = ?",
+                    (chat_id,),
+                )
 
 
 class SqlitePluggyItemRepository:

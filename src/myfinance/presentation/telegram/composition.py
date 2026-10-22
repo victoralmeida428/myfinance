@@ -9,6 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from myfinance.application.ports import (
+    ConversationMemory,
+    FollowUpResolver,
+    LanguageModel,
     MessageParser,
     ProcessedUpdateRepository,
     SpendingQueryParser,
@@ -18,6 +21,7 @@ from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
+    GetSpendingPlanUseCase,
     GetTopSpendingMonthUseCase,
     HandleBankingQueryUseCase,
     HandleMessageUseCase,
@@ -38,10 +42,14 @@ from myfinance.infrastructure.parsing.dates import PortugueseDateResolver
 from myfinance.infrastructure.parsing.deterministic import (
     DeterministicMessageParser,
 )
+from myfinance.infrastructure.parsing.follow_up import OpenCodeFollowUpResolver
 from myfinance.infrastructure.parsing.gate import JevLLMGate
 from myfinance.infrastructure.parsing.llm import OpenCodeMessageParser
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
+)
+from myfinance.infrastructure.parsing.spending_plan import (
+    OpenCodeSpendingPlanNarrator,
 )
 from myfinance.infrastructure.parsing.spending_query import (
     DeterministicSpendingQueryParser,
@@ -59,6 +67,7 @@ from myfinance.infrastructure.routing import (
 )
 from myfinance.infrastructure.sqlite import (
     SqliteBankingRepository,
+    SqliteConversationMemory,
     SqliteDatabase,
     SqliteEntryRepository,
     SqlitePluggyItemRepository,
@@ -80,6 +89,8 @@ class BotContainer:
     banking: HandleBankingQueryUseCase
     register_item: RegisterPluggyItemUseCase
     explain_failure: ExplainFailureUseCase | None
+    memory: ConversationMemory
+    follow_up: FollowUpResolver | None
 
 
 def build_container(settings: Settings) -> BotContainer:
@@ -100,6 +111,7 @@ def build_container(settings: Settings) -> BotContainer:
     deterministic = DeterministicMessageParser(resolver, classifier)
     llm: MessageParser | None = None
     explain_failure: ExplainFailureUseCase | None = None
+    model: LanguageModel | None = None
     spending_parser: SpendingQueryParser
     if _has_opencode_key(settings):
         model = OpenCodeLanguageModel(settings)
@@ -147,6 +159,22 @@ def build_container(settings: Settings) -> BotContainer:
         resolver,
         spending_parser,
     )
+    narrator = (
+        OpenCodeSpendingPlanNarrator(model) if model is not None else None
+    )
+    spending_plan = GetSpendingPlanUseCase(
+        entries,
+        bank_expenses,
+        clock,
+        narrator,
+    )
+
+    memory = SqliteConversationMemory(database)
+    follow_up = (
+        OpenCodeFollowUpResolver(model)
+        if _has_opencode_key(settings) and model is not None
+        else None
+    )
 
     return BotContainer(
         handle_message=HandleMessageUseCase(
@@ -159,6 +187,7 @@ def build_container(settings: Settings) -> BotContainer:
             summary_gate,
             top_month,
             spending_search,
+            spending_plan,
         ),
         summary=summary,
         details=GetDayDetailsUseCase(entries, clock, resolver),
@@ -167,6 +196,8 @@ def build_container(settings: Settings) -> BotContainer:
         banking=banking,
         register_item=register_item,
         explain_failure=explain_failure,
+        memory=memory,
+        follow_up=follow_up,
     )
 
 
