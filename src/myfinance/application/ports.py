@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
-from myfinance.application.dto import ParsedMessage
+from myfinance.application.dto import ParsedMessage, SpendingQuery
 from myfinance.domain.banking import (
     BankAccount,
     BankExpense,
@@ -36,6 +36,7 @@ __all__ = [
     "MessageParser",
     "PluggyItemRepository",
     "ProcessedUpdateRepository",
+    "SpendingQueryParser",
     "SummaryIntentGate",
 ]
 
@@ -101,6 +102,12 @@ class MessageParser(Protocol):
     """Extracts a structured entry from a free-form user message."""
 
     async def parse(self, text: str, *, today: date) -> ParsedMessage | None: ...
+
+
+class SpendingQueryParser(Protocol):
+    """Extracts a spending query from a free-form user message."""
+
+    async def parse(self, text: str, *, today: date) -> SpendingQuery | None: ...
 
 
 class DateResolver(Protocol):

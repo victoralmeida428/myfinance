@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import TypeAlias
 
 from myfinance.domain.banking import BankAccount, BankIdentity, BankTransaction
 from myfinance.domain.categories import Category
@@ -23,6 +24,8 @@ __all__ = [
     "ParsedMessage",
     "RegisteredMessage",
     "RegistrationResult",
+    "SpendingAnswerMessage",
+    "SpendingQuery",
     "SummaryMessage",
     "TopMonthMessage",
     "TransactionsAnswer",
@@ -89,8 +92,34 @@ class TopMonthMessage:
     winner_balances: tuple[CategoryBalance, ...]
 
 
-type HandleMessageResult = (
-    RegisteredMessage | SummaryMessage | TopMonthMessage | NeedsClarification
+@dataclass(frozen=True, slots=True)
+class SpendingQuery:
+    """The period, category and terms extracted from a spending question."""
+
+    period_reference: str | None
+    category: Category | None
+    keywords: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SpendingAnswerMessage:
+    """The total and transaction count for a free-form spending question."""
+
+    start: date
+    end: date
+    label: str
+    total_cents: int
+    count: int
+    category: Category | None
+    keywords: tuple[str, ...]
+
+
+HandleMessageResult: TypeAlias = (
+    RegisteredMessage
+    | SummaryMessage
+    | TopMonthMessage
+    | SpendingAnswerMessage
+    | NeedsClarification
 )
 
 
