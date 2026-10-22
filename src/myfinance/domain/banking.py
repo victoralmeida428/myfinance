@@ -75,6 +75,7 @@ class BankTransaction:
     currency: str
     category: str | None
     direction: str = "DEBIT"
+    description_raw: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,8 @@ class BankExpense:
     amount_cents: int
     category: Category
     institution: str | None
+    raw_category: str | None = None
+    description_raw: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

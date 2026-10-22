@@ -93,6 +93,7 @@ def make_transaction(
     amount_cents: int,
     category: str | None,
     direction: str,
+    description_raw: str | None = None,
 ) -> BankTransaction:
     return BankTransaction(
         id=uuid4(),
@@ -104,6 +105,7 @@ def make_transaction(
         currency="BRL",
         category=category,
         direction=direction,
+        description_raw=description_raw,
     )
 
 
@@ -269,3 +271,50 @@ async def test_no_active_items_returns_no_expenses() -> None:
     expenses = await provider.expenses(TODAY, TODAY)
 
     assert expenses == ()
+
+
+async def test_raw_category_and_description_survive_mapping() -> None:
+    item = make_item("Nubank")
+    account = make_account(item, "BANK")
+    transaction = make_transaction(
+        account,
+        description="POSTO IPIRANGA",
+        amount_cents=-15000,
+        category="Gas Stations",
+        direction="DEBIT",
+        description_raw="POSTO IPIRANGA",
+    )
+    banking = FakeBankingProvider(
+        {item.id: (account,)}, {account.id: (transaction,)}
+    )
+    provider = build_provider(items=(item,), banking=banking)
+
+    expenses = await provider.expenses(TODAY, TODAY)
+
+    expense = expenses[0]
+    assert expense.category is Category.TRANSPORTE
+    assert expense.raw_category == "Gas Stations"
+    assert expense.description_raw == "POSTO IPIRANGA"
+
+
+async def test_missing_raw_category_and_description_yield_none() -> None:
+    item = make_item("Nubank")
+    account = make_account(item, "BANK")
+    transaction = make_transaction(
+        account,
+        description="LANÇAMENTO DESCONHECIDO",
+        amount_cents=-900,
+        category=None,
+        direction="DEBIT",
+        description_raw=None,
+    )
+    banking = FakeBankingProvider(
+        {item.id: (account,)}, {account.id: (transaction,)}
+    )
+    provider = build_provider(items=(item,), banking=banking)
+
+    expenses = await provider.expenses(TODAY, TODAY)
+
+    expense = expenses[0]
+    assert expense.raw_category is None
+    assert expense.description_raw is None

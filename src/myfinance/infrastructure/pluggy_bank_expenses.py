@@ -120,6 +120,8 @@ class PluggyBankExpenseProvider:
                             amount_cents=abs(transaction.amount_cents),
                             category=category,
                             institution=item.connector_name,
+                            raw_category=transaction.category,
+                            description_raw=transaction.description_raw,
                         )
                     )
         return tuple(expenses)

@@ -178,6 +178,7 @@ class PluggyBankingProvider:
             currency=transaction.currency_code,
             category=transaction.category,
             direction=transaction.type,
+            description_raw=transaction.description_raw,
         )
 
     @staticmethod
