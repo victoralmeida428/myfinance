@@ -21,6 +21,8 @@ from myfinance.application.dto import (
     ParsedMessage,
     RegisteredMessage,
     RegistrationResult,
+    SpendingAnswerMessage,
+    SpendingQuery,
     SummaryMessage,
     TopMonthMessage,
     TransactionsAnswer,
@@ -40,9 +42,11 @@ from myfinance.application.ports import (
     LanguageModel,
     MessageParser,
     PluggyItemRepository,
+    SpendingQueryParser,
     SummaryIntentGate,
 )
-from myfinance.domain.banking import BankingIntent, PluggyItem
+from myfinance.domain.banking import BankExpense, BankingIntent, PluggyItem
+from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
 from myfinance.domain.models import ChatMessage, ClientUserId, ConnectToken
 from myfinance.domain.summary import (
@@ -64,6 +68,7 @@ __all__ = [
     "HandleMessageUseCase",
     "RegisterEntryUseCase",
     "RegisterPluggyItemUseCase",
+    "SearchSpendingUseCase",
 ]
 
 _EXPLANATION_TIMEOUT_SECONDS = 15
@@ -346,6 +351,114 @@ class GetTopSpendingMonthUseCase:
             window_end=today,
             ranking=ranking,
             winner_balances=summary.balances,
+        )
+
+
+class SearchSpendingUseCase:
+    """Answer a free-form spending question over manual entries and the bank.
+
+    Provider failures propagate so callers can explain them instead of
+    rendering an empty answer.
+    """
+
+    def __init__(
+        self,
+        entries: EntryRepository,
+        bank_expenses: BankExpenseProvider | None,
+        clock: Clock,
+        references: DateReferenceExtractor,
+        dates: DateResolver,
+        parser: SpendingQueryParser,
+    ) -> None:
+        self._entries = entries
+        self._bank_expenses = bank_expenses
+        self._clock = clock
+        self._references = references
+        self._dates = dates
+        self._parser = parser
+
+    async def execute(self, text: str) -> SpendingAnswerMessage | None:
+        today = self._clock.today()
+        query = await self._parser.parse(text, today=today)
+        if query is None:
+            return None
+
+        start, end = self._resolve_period(
+            query.period_reference or text, text, today
+        )
+        entries = await self._entries.list_between(start, end)
+        bank_expenses: Sequence[BankExpense] = ()
+        if self._bank_expenses is not None:
+            bank_expenses = await self._bank_expenses.expenses(start, end)
+
+        bank_keys = {
+            (expense.day, expense.amount_cents) for expense in bank_expenses
+        }
+        amounts: list[int] = []
+        for entry in entries:
+            if entry.kind is EntryKind.FORECAST:
+                continue
+            if (entry.day, entry.amount.cents) in bank_keys:
+                continue
+            if self._matches(
+                query,
+                entry.category,
+                (entry.description, entry.category.label, entry.category.value),
+            ):
+                amounts.append(entry.amount.cents)
+        for expense in bank_expenses:
+            if self._matches(
+                query,
+                expense.category,
+                (
+                    expense.description,
+                    expense.category.label,
+                    expense.category.value,
+                    expense.raw_category or "",
+                    expense.description_raw or "",
+                ),
+            ):
+                amounts.append(expense.amount_cents)
+
+        label = (
+            query.category.label
+            if query.category is not None
+            else ", ".join(query.keywords)
+        )
+        return SpendingAnswerMessage(
+            start=start,
+            end=end,
+            label=label,
+            total_cents=sum(amounts),
+            count=len(amounts),
+            category=query.category,
+            keywords=query.keywords,
+        )
+
+    def _resolve_period(
+        self, reference: str, text: str, today: date
+    ) -> tuple[date, date]:
+        period = resolve_period(reference, today=today)
+        if period is not None:
+            return period
+        extracted = self._references.extract(text)
+        if extracted is not None:
+            day = self._dates.resolve(extracted, today=today)
+            if day is not None:
+                return day, day
+        return today.replace(day=1), today
+
+    @staticmethod
+    def _matches(
+        query: SpendingQuery, item_category: Category, parts: Sequence[str]
+    ) -> bool:
+        if query.category is not None and item_category is query.category:
+            return True
+        haystack = _strip_accents(" ".join(parts))
+        return any(
+            _strip_accents(keyword) in haystack
+            for keyword in query.keywords
+            if keyword.strip()
         )
 
 
