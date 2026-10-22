@@ -38,3 +38,15 @@ def test_help_text_lists_every_category(label: str) -> None:
 def test_help_text_documents_the_data_commands() -> None:
     assert "/resumo" in HELP_TEXT
     assert "/detalhes" in HELP_TEXT
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "quanto gastei com uber esse mês?",
+        "quanto gastei com alimentos?",
+        "quanto em posto de gasolina?",
+    ],
+)
+def test_help_text_documents_spending_questions(phrase: str) -> None:
+    assert phrase in HELP_TEXT

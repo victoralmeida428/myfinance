@@ -21,6 +21,11 @@ Exemplos:
 "previsão de transporte amanhã 30"
 "farmácia ontem 120"
 
+Perguntas de gasto:
+"quanto gastei com uber esse mês?"
+"quanto gastei com alimentos?"
+"quanto em posto de gasolina?"
+
 Categorias: Alimentação, Transporte, Lazer, Saúde, Serviços, Outros."""
 
 
