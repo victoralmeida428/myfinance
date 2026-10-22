@@ -223,3 +223,15 @@ async def test_deterministic_returns_none_for_blank_text() -> None:
     parser = DeterministicSpendingQueryParser()
 
     assert await parser.parse("   ", today=TODAY) is None
+
+
+async def test_deterministic_drops_year_word_from_keywords() -> None:
+    parser = DeterministicSpendingQueryParser()
+
+    result = await parser.parse(
+        "quanto gastei de gasolina esse ano?", today=TODAY
+    )
+
+    assert result is not None
+    assert result.period_reference == "quanto gastei de gasolina esse ano?"
+    assert result.keywords == ("gasolina",)

@@ -76,6 +76,8 @@ _STOPWORDS = frozenset(
         "este",
         "mes",
         "semana",
+        "ano",
+        "anos",
         "hoje",
         "ontem",
         "amanha",

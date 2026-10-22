@@ -496,3 +496,28 @@ async def test_answer_message_carries_the_query_fields() -> None:
     assert isinstance(answer, SpendingAnswerMessage)
     assert answer.keywords == ("uber",)
     assert answer.category is None
+
+
+async def test_year_period_reference_fetches_from_january_first() -> None:
+    repository = InMemoryEntryRepository(
+        (
+            make_entry(date(2026, 10, 5), 2500, Category.TRANSPORTE, "gasolina"),
+        )
+    )
+    bank = FakeBankExpenses()
+    use_case = SearchSpendingUseCase(
+        repository,
+        bank,
+        FixedClock(TODAY),
+        FakeReferences(),
+        FakeDates(),
+        FakeSpendingParser(SpendingQuery("esse ano", None, ("gasolina",))),
+    )
+
+    answer = await use_case.execute("quanto gastei de gasolina esse ano?")
+
+    assert answer is not None
+    assert answer.start == date(2026, 1, 1)
+    assert answer.end == TODAY
+    assert repository.calls == [(date(2026, 1, 1), TODAY)]
+    assert bank.calls == [(date(2026, 1, 1), TODAY)]

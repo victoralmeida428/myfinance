@@ -32,6 +32,19 @@ _LAST_WEEK_MARKERS = ("semana passada", "semana anterior")
 _LAST_SEVEN_DAYS_MARKERS = ("ultimos 7 dias", "ultima semana")
 _LAST_THIRTY_DAYS_MARKERS = ("ultimos 30 dias",)
 
+_LAST_YEAR_MARKERS = ("ano passado", "ultimo ano")
+_NEXT_YEAR_MARKERS = ("ano que vem", "proximo ano")
+_CURRENT_YEAR_MARKERS = (
+    "esse ano",
+    "este ano",
+    "nesse ano",
+    "neste ano",
+    "desse ano",
+    "deste ano",
+    "ano atual",
+)
+_BARE_YEAR_PATTERN = re.compile(r"(?<![\d/-])(?:19|20)\d{2}(?![\d/-])")
+
 _MONTH_NAMES: dict[str, int] = {
     "janeiro": 1,
     "fevereiro": 2,
@@ -77,6 +90,17 @@ def _next_month_range(today: date) -> tuple[date, date]:
     start = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
     end = (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
     return start, end
+
+
+def _full_year_range(year: int) -> tuple[date, date]:
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _year_range(year: int, *, today: date) -> tuple[date, date]:
+    """Return the whole year, capped at ``today`` when it is the current one."""
+    if year == today.year:
+        return date(year, 1, 1), today
+    return _full_year_range(year)
 
 
 def _month_name_range(
@@ -156,4 +180,25 @@ def resolve_period(
     if _contains_any(normalized, _LAST_THIRTY_DAYS_MARKERS):
         return today - timedelta(days=29), today
 
-    return _month_name_range(normalized, today=today)
+    # Year expressions are checked before the month-name logic so that a
+    # month with an explicit year ("outubro de 2025") still resolves to that
+    # month. The bare-year fallback comes after the month-name logic and only
+    # accepts a standalone 1900-2099 year, never one embedded in a date.
+    if _contains_any(normalized, _LAST_YEAR_MARKERS):
+        return _full_year_range(today.year - 1)
+
+    if _contains_any(normalized, _NEXT_YEAR_MARKERS):
+        return _full_year_range(today.year + 1)
+
+    if _contains_any(normalized, _CURRENT_YEAR_MARKERS):
+        return today.replace(month=1, day=1), today
+
+    month_range = _month_name_range(normalized, today=today)
+    if month_range is not None:
+        return month_range
+
+    bare_year = _BARE_YEAR_PATTERN.search(normalized)
+    if bare_year is not None:
+        return _year_range(int(bare_year.group()), today=today)
+
+    return None

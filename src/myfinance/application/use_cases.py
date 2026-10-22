@@ -158,6 +158,8 @@ _SPENDING_QUERY_STOPWORDS = frozenset(
         "nesta",
         "mes",
         "semana",
+        "ano",
+        "anos",
         "hoje",
         "ontem",
         "amanha",

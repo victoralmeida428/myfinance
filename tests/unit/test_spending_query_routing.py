@@ -329,3 +329,14 @@ async def test_detector_edge_classes(
     await use_case.execute(text)
 
     assert bool(search.calls) is search_expected
+
+
+async def test_year_period_subject_query_is_answered_by_the_search() -> None:
+    search = FakeSpendingSearch(ANSWER)
+    use_case, _ = build_use_case(search)
+
+    text = "quanto gastei de gasolina esse ano?"
+    result = await use_case.execute(text)
+
+    assert isinstance(result, SpendingAnswerMessage)
+    assert search.calls == [text]
