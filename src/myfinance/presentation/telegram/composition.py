@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from myfinance.application.ports import MessageParser, ProcessedUpdateRepository
+from myfinance.application.ports import (
+    MessageParser,
+    ProcessedUpdateRepository,
+    SpendingQueryParser,
+)
 from myfinance.application.use_cases import (
     ExplainFailureUseCase,
     GetDailySummaryUseCase,
@@ -19,6 +23,7 @@ from myfinance.application.use_cases import (
     HandleMessageUseCase,
     RegisterEntryUseCase,
     RegisterPluggyItemUseCase,
+    SearchSpendingUseCase,
 )
 from myfinance.config import Settings
 from myfinance.infrastructure.categorization import (
@@ -37,6 +42,10 @@ from myfinance.infrastructure.parsing.gate import JevLLMGate
 from myfinance.infrastructure.parsing.llm import OpenCodeMessageParser
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
+)
+from myfinance.infrastructure.parsing.spending_query import (
+    DeterministicSpendingQueryParser,
+    OpenCodeSpendingQueryParser,
 )
 from myfinance.infrastructure.parsing.summary_gate import JevSummaryIntentGate
 from myfinance.infrastructure.pluggy_bank_expenses import (
@@ -91,10 +100,14 @@ def build_container(settings: Settings) -> BotContainer:
     deterministic = DeterministicMessageParser(resolver, classifier)
     llm: MessageParser | None = None
     explain_failure: ExplainFailureUseCase | None = None
+    spending_parser: SpendingQueryParser
     if _has_opencode_key(settings):
         model = OpenCodeLanguageModel(settings)
         llm = OpenCodeMessageParser(model, classifier)
         explain_failure = ExplainFailureUseCase(model)
+        spending_parser = OpenCodeSpendingQueryParser(model)
+    else:
+        spending_parser = DeterministicSpendingQueryParser()
     parser = CompositeMessageParser(
         deterministic,
         llm,
@@ -126,6 +139,14 @@ def build_container(settings: Settings) -> BotContainer:
         resolver,
         PortugueseDateReferenceExtractor(),
     )
+    spending_search = SearchSpendingUseCase(
+        entries,
+        bank_expenses,
+        clock,
+        PortugueseDateReferenceExtractor(),
+        resolver,
+        spending_parser,
+    )
 
     return BotContainer(
         handle_message=HandleMessageUseCase(
@@ -137,6 +158,7 @@ def build_container(settings: Settings) -> BotContainer:
             period_summary,
             summary_gate,
             top_month,
+            spending_search,
         ),
         summary=summary,
         details=GetDayDetailsUseCase(entries, clock, resolver),
