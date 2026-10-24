@@ -1,68 +1,41 @@
 """Telegram handlers: adapt updates to use cases and render the replies.
 
-Handlers stay thin on purpose: they hold no SQL, no date parsing and no
-provider SDK usage. All business decisions live in the application layer and
-all rendering lives in :mod:`myfinance.presentation.telegram.formatting`.
+Handlers stay thin on purpose: they deduplicate updates, call one use case and
+send the rendered text. Conversation state, routing and failure explanations
+live in :mod:`myfinance.presentation.telegram.conversation`.
 """
 
 from __future__ import annotations
 
-import logging
-import unicodedata
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Awaitable
+from typing import TypeVar
 from uuid import UUID
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from myfinance.application.dto import (
-    NeedsClarification,
-    RegisteredMessage,
-    SpendingAnswerMessage,
-    SpendingPlanMessage,
-    SummaryMessage,
-    TopMonthMessage,
-)
+from myfinance.application.dto import SummaryMessage
 from myfinance.application.errors import (
     ApplicationError,
     InvalidDateReference,
     ProviderError,
 )
-from myfinance.application.ports import (
-    ConversationMemory,
-    FollowUpResolver,
-    ProcessedUpdateRepository,
-)
+from myfinance.application.ports import ProcessedUpdateRepository
 from myfinance.application.use_cases import (
-    ExplainFailureUseCase,
-    GetDailySummaryUseCase,
     GetDayDetailsUseCase,
-    GetPeriodSummaryUseCase,
-    HandleBankingQueryUseCase,
-    HandleMessageUseCase,
+    GetSummaryUseCase,
     RegisterPluggyItemUseCase,
 )
-from myfinance.domain.models import ChatMessage
-from myfinance.domain.summary import PeriodSummary
 from myfinance.presentation.telegram.commands import HELP_TEXT
+from myfinance.presentation.telegram.conversation import TelegramConversation
 from myfinance.presentation.telegram.formatting import (
-    format_banking,
     format_details,
-    format_period_summary,
-    format_registration,
-    format_spending_answer,
-    format_spending_plan,
-    format_summary,
-    format_top_month,
+    format_reply,
 )
 
 __all__ = ["BotHandlers"]
 
-_LOGGER = logging.getLogger(__name__)
-
 _INVALID_DATE_REPLY = "Não entendi a data. Use hoje, ontem, amanhã, 2026-10-25 ou 25/10."
-_GENERIC_ERROR_REPLY = "Não consegui concluir agora. Tente novamente."
 _UNSUPPORTED_REPLY = "Por enquanto eu só entendo mensagens de texto."
 _INVALID_UUID_REPLY = "UUID inválido."
 _ITEM_UNAVAILABLE_REPLY = "Registro de item indisponível."
@@ -71,21 +44,7 @@ _ITEM_REGISTERED_REPLY = (
     "'extrato de hoje'."
 )
 
-_FOLLOW_UP_PREFIXES = (
-    "e ",
-    "e,",
-    "tambem",
-    "agora",
-    "no cartao",
-    "na conta",
-    "desse",
-    "mesmo",
-    "e de",
-    "e em",
-    "e no",
-    "e na",
-)
-_MAX_FOLLOW_UP_WORDS = 6
+_T = TypeVar("_T")
 
 
 def _chat_id(update: Update) -> str | None:
@@ -99,54 +58,23 @@ def _chat_id(update: Update) -> str | None:
     return None
 
 
-def _looks_like_follow_up(text: str) -> bool:
-    """Return whether ``text`` is short or starts like an elliptical follow-up."""
-    normalized = _normalize(text)
-    if not normalized:
-        return False
-    if len(normalized.split()) <= _MAX_FOLLOW_UP_WORDS:
-        return True
-    return normalized.startswith(_FOLLOW_UP_PREFIXES)
-
-
-def _normalize(text: str) -> str:
-    """Lowercase, strip accents and collapse whitespace."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    without_marks = "".join(
-        character
-        for character in decomposed
-        if not unicodedata.combining(character)
-    )
-    return " ".join(without_marks.lower().split())
-
-
 class BotHandlers:
-    """Update handlers backed by the finance use cases."""
+    """Update handlers backed by the conversation and command use cases."""
 
     def __init__(
         self,
         *,
-        handle_message: HandleMessageUseCase,
-        summary: GetDailySummaryUseCase,
+        conversation: TelegramConversation,
+        summary: GetSummaryUseCase,
         details: GetDayDetailsUseCase,
         updates: ProcessedUpdateRepository,
-        period_summary: GetPeriodSummaryUseCase | None = None,
-        banking: HandleBankingQueryUseCase | None = None,
         register_item: RegisterPluggyItemUseCase | None = None,
-        explain_failure: ExplainFailureUseCase | None = None,
-        memory: ConversationMemory | None = None,
-        follow_up: FollowUpResolver | None = None,
     ) -> None:
-        self._handle_message = handle_message
+        self._conversation = conversation
         self._summary = summary
         self._details = details
         self._updates = updates
-        self._period_summary = period_summary
-        self._banking = banking
         self._register_item = register_item
-        self._explain_failure = explain_failure
-        self._memory = memory
-        self._follow_up = follow_up
 
     async def start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -165,50 +93,35 @@ class BotHandlers:
     ) -> None:
         """Reply with the summary for the requested day or period."""
         reference = self._reference(context.args)
-        try:
-            if self._period_summary is not None:
-                period = await self._period_summary.execute(reference)
-                if period is not None:
-                    await self._reply(update, format_period_summary(period))
-                    return
-            summary = await self._summary.execute(reference)
-        except InvalidDateReference:
-            await self._reply(update, _INVALID_DATE_REPLY)
+        ok, summary = await self._guarded(
+            update,
+            self._summary.execute(reference),
+            self._question_text(update, "resumo do dia"),
+        )
+        if not ok:
             return
-        except (ApplicationError, ProviderError) as exc:
-            await self._reply_failure(
-                update, self._question_text(update, "resumo do dia"), exc
-            )
-            return
-        await self._reply(update, format_summary(summary))
+        assert summary is not None
+        await self._reply(update, format_reply(SummaryMessage(summary=summary)))
 
     async def details(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reply with the entries registered for the requested day."""
         reference = self._reference(context.args)
-        try:
-            entries = await self._details.execute(reference)
-            # The use case returns entries only, so an empty day has no day to
-            # render; the summary resolves the same reference without any date
-            # parsing happening in the presentation layer.
-            day = entries[0].day if entries else (
-                await self._summary.execute(reference)
-            ).day
-        except InvalidDateReference:
-            await self._reply(update, _INVALID_DATE_REPLY)
+        ok, details = await self._guarded(
+            update,
+            self._details.execute(reference),
+            self._question_text(update, "detalhes do dia"),
+        )
+        if not ok:
             return
-        except (ApplicationError, ProviderError) as exc:
-            await self._reply_failure(
-                update, self._question_text(update, "detalhes do dia"), exc
-            )
-            return
-        await self._reply(update, format_details(entries, day))
+        assert details is not None
+        await self._reply(update, format_details(details.entries, details.day))
 
     async def message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Register a free-form text message, once per Telegram update."""
+        """Handle a free-form text message, once per Telegram update."""
         if not await self._updates.claim(update.update_id):
             return
 
@@ -219,60 +132,9 @@ class BotHandlers:
         if not text or not text.strip():
             return
 
-        chat_id = _chat_id(update)
-        history = await self._history(chat_id)
-        original_text = text
-        if (
-            history
-            and self._follow_up is not None
-            and _looks_like_follow_up(text)
-        ):
-            try:
-                rewritten = await self._follow_up.rewrite(text, history)
-            except ProviderError:
-                rewritten = None
-            if rewritten:
-                text = rewritten
-
-        await self._remember(chat_id, "user", original_text)
-
-        async def reply_and_remember(content: str) -> None:
-            await self._reply(update, content)
-            await self._remember(chat_id, "assistant", content)
-
-        if self._banking is not None:
-            try:
-                answer = await self._banking.execute(text)
-            except (ApplicationError, ProviderError) as exc:
-                await self._reply_failure(update, text, exc)
-                return
-            if answer is not None:
-                await reply_and_remember(format_banking(answer))
-                return
-
-        try:
-            result = await self._handle_message.execute(text)
-        except (ApplicationError, ProviderError) as exc:
-            await self._reply_failure(update, text, exc)
-            return
-
-        if isinstance(result, RegisteredMessage):
-            await reply_and_remember(format_registration(result.result))
-        elif isinstance(result, SummaryMessage):
-            if isinstance(result.summary, PeriodSummary):
-                await reply_and_remember(
-                    format_period_summary(result.summary)
-                )
-            else:
-                await reply_and_remember(format_summary(result.summary))
-        elif isinstance(result, TopMonthMessage):
-            await reply_and_remember(format_top_month(result))
-        elif isinstance(result, SpendingAnswerMessage):
-            await reply_and_remember(format_spending_answer(result))
-        elif isinstance(result, SpendingPlanMessage):
-            await reply_and_remember(format_spending_plan(result))
-        elif isinstance(result, NeedsClarification):
-            await reply_and_remember(result.reason)
+        await self._reply(
+            update, await self._conversation.respond(_chat_id(update), text)
+        )
 
     async def unsupported(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -299,69 +161,47 @@ class BotHandlers:
             return
 
         connector_name = " ".join(args[1:]).strip() or None
-        try:
-            await self._register_item.execute(
-                item_uuid,
-                status="created",
-                connector_name=connector_name,
-            )
-        except (ApplicationError, ProviderError) as exc:
-            await self._reply_failure(
-                update, self._question_text(update, "registrar item do Pluggy"), exc
-            )
-            return
-        await self._reply(update, _ITEM_REGISTERED_REPLY)
+        ok, _ = await self._guarded(
+            update,
+            self._register_item.execute(
+                item_uuid, status="created", connector_name=connector_name
+            ),
+            self._question_text(update, "registrar item do Pluggy"),
+            invalid_date=False,
+        )
+        if ok:
+            await self._reply(update, _ITEM_REGISTERED_REPLY)
 
-    async def _history(self, chat_id: str | None) -> Sequence[ChatMessage]:
-        """Load the recent exchanges, tolerating an unavailable memory."""
-        if self._memory is None or chat_id is None:
-            return ()
-        try:
-            return await self._memory.recent(chat_id, exchanges=5)
-        except Exception as exc:
-            _LOGGER.error(
-                "Conversation memory read failed with %s", type(exc).__name__
-            )
-            return ()
-
-    async def _remember(
+    async def _guarded(
         self,
-        chat_id: str | None,
-        role: Literal["user", "assistant"],
-        content: str,
-    ) -> None:
-        """Store a message without ever breaking the reply on failure."""
-        if self._memory is None or chat_id is None:
-            return
+        update: Update,
+        coro: Awaitable[_T],
+        question: str,
+        *,
+        invalid_date: bool = True,
+    ) -> tuple[bool, _T | None]:
+        """Await a use case, replying with the right error message on failure."""
         try:
-            await self._memory.append(chat_id, role, content)
-        except Exception as exc:
-            _LOGGER.error(
-                "Conversation memory write failed with %s", type(exc).__name__
+            return True, await coro
+        except InvalidDateReference:
+            if invalid_date:
+                await self._reply(update, _INVALID_DATE_REPLY)
+            return False, None
+        except (ApplicationError, ProviderError) as exc:
+            await self._reply(
+                update, await self._conversation.failure_text(question, exc)
             )
-
-    async def _reply_failure(
-        self, update: Update, question: str, error: Exception
-    ) -> None:
-        """Explain the failure when possible, otherwise use the generic reply."""
-        if self._explain_failure is None:
-            await self._reply(update, _GENERIC_ERROR_REPLY)
-            return
-        try:
-            explanation = await self._explain_failure.execute(
-                question=question, error=error
-            )
-        except ProviderError:
-            await self._reply(update, _GENERIC_ERROR_REPLY)
-            return
-        text = explanation.strip()
-        await self._reply(update, text or _GENERIC_ERROR_REPLY)
+            return False, None
 
     @staticmethod
     def _question_text(update: Update, fallback: str) -> str:
         """Return the command text when present, else a short description."""
         telegram_message = update.effective_message
-        text = telegram_message.text if telegram_message is not None else None
+        text = (
+            getattr(telegram_message, "text", None)
+            if telegram_message is not None
+            else None
+        )
         if text and text.strip():
             return text.strip()
         return fallback

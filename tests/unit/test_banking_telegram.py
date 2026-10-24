@@ -13,6 +13,7 @@ from myfinance.application.dto import (
     TransactionsAnswer,
 )
 from myfinance.domain.banking import BankAccount, BankIdentity, BankTransaction
+from myfinance.presentation.telegram.conversation import TelegramConversation
 from myfinance.presentation.telegram.formatting import (
     format_banking,
     mask_document,
@@ -124,6 +125,21 @@ def transaction(day: date, description: str, amount_cents: int) -> BankTransacti
     )
 
 
+class FakeIncoming:
+    """Mimics the conversation dispatcher: banking first, then the manual path."""
+
+    def __init__(self, banking: FakeBanking | None, manual: FakeManual) -> None:
+        self._banking = banking
+        self._manual = manual
+
+    async def execute(self, text: str):
+        if self._banking is not None:
+            answer = await self._banking.execute(text)
+            if answer is not None:
+                return answer
+        return await self._manual.execute(text)
+
+
 def make_handlers(
     *,
     banking: FakeBanking | None = None,
@@ -133,11 +149,12 @@ def make_handlers(
 ) -> tuple[BotHandlers, FakeManual, FakeBanking | None]:
     manual = manual or FakeManual()
     handlers = BotHandlers(
-        handle_message=manual,  # type: ignore[arg-type]
+        conversation=TelegramConversation(
+            incoming=FakeIncoming(banking, manual)  # type: ignore[arg-type]
+        ),
         summary=Unused(),  # type: ignore[arg-type]
         details=Unused(),  # type: ignore[arg-type]
         updates=updates or InMemoryProcessedUpdates(),
-        banking=banking,  # type: ignore[arg-type]
         register_item=register_item,  # type: ignore[arg-type]
     )
     return handlers, manual, banking

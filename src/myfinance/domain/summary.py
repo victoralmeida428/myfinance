@@ -10,6 +10,7 @@ from enum import StrEnum
 from myfinance.domain.banking import BankExpense
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
+from myfinance.domain.expenses import manual_expenses_not_in_bank
 
 __all__ = [
     "BalanceStatus",
@@ -155,18 +156,13 @@ def _build_balances(
     manual_expense: dict[Category, int] = {}
     bank_expense: dict[Category, int] = {}
 
-    bank_keys = {
-        (expense.day, expense.amount_cents) for expense in bank_expenses
-    }
-
     for entry in entries:
         if entry.kind is EntryKind.FORECAST:
             forecast[entry.category] = (
                 forecast.get(entry.category, 0) + entry.amount.cents
             )
-            continue
-        if (entry.day, entry.amount.cents) in bank_keys:
-            continue
+
+    for entry in manual_expenses_not_in_bank(entries, bank_expenses):
         manual_expense[entry.category] = (
             manual_expense.get(entry.category, 0) + entry.amount.cents
         )

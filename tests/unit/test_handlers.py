@@ -13,6 +13,8 @@ from myfinance.application.errors import ProviderError
 from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
+    GetPeriodSummaryUseCase,
+    GetSummaryUseCase,
     HandleMessageUseCase,
     RegisterEntryUseCase,
 )
@@ -28,7 +30,11 @@ from myfinance.infrastructure.parsing.deterministic import (
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
 )
+from myfinance.infrastructure.routing.messages import (
+    DeterministicMessageIntentRouter,
+)
 from myfinance.presentation.telegram.commands import HELP_TEXT
+from myfinance.presentation.telegram.conversation import TelegramConversation
 from myfinance.presentation.telegram.formatting import format_spending_plan
 from myfinance.presentation.telegram.handlers import BotHandlers
 
@@ -154,6 +160,9 @@ class FakeFollowUp:
         self.rewritten = rewritten
         self.calls: list[tuple[str, tuple[ChatMessage, ...]]] = []
 
+    def should_rewrite(self, text: str) -> bool:
+        return True
+
     async def rewrite(
         self, text: str, history: tuple[ChatMessage, ...] | list[ChatMessage]
     ) -> str | None:
@@ -190,21 +199,25 @@ def build_handlers(
     summary = GetDailySummaryUseCase(
         repository, clock, resolver, bank_expenses
     )
+    period = GetPeriodSummaryUseCase(repository, clock, bank_expenses)
+    messages = handle_message or HandleMessageUseCase(
+        DeterministicMessageIntentRouter(),
+        DeterministicMessageParser(resolver),
+        register,
+        clock,
+        summary,
+        PortugueseDateReferenceExtractor(),
+    )
     handlers = BotHandlers(
-        handle_message=handle_message
-        or HandleMessageUseCase(
-            DeterministicMessageParser(resolver),
-            register,
-            clock,
-            summary,
-            PortugueseDateReferenceExtractor(),
+        conversation=TelegramConversation(
+            incoming=messages,  # type: ignore[arg-type]
+            memory=memory,
+            follow_up=follow_up,
+            explain_failure=explain_failure,
         ),
-        summary=summary,
+        summary=GetSummaryUseCase(period, summary),
         details=GetDayDetailsUseCase(repository, clock, resolver),
         updates=updates,
-        explain_failure=explain_failure,
-        memory=memory,
-        follow_up=follow_up,
     )
     return handlers, repository, updates
 
@@ -357,9 +370,14 @@ async def test_message_replies_with_a_spending_answer() -> None:
     repository = InMemoryEntryRepository()
     clock = FixedClock(NOW)
     resolver = PortugueseDateResolver()
+    summary = GetDailySummaryUseCase(repository, clock, resolver)
     handlers = BotHandlers(
-        handle_message=handler,
-        summary=GetDailySummaryUseCase(repository, clock, resolver),
+        conversation=TelegramConversation(
+            incoming=handler  # type: ignore[arg-type]
+        ),
+        summary=GetSummaryUseCase(
+            GetPeriodSummaryUseCase(repository, clock), summary
+        ),
         details=GetDayDetailsUseCase(repository, clock, resolver),
         updates=InMemoryProcessedUpdates(),
     )

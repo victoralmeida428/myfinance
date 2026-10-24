@@ -35,6 +35,19 @@ class FakeLanguageModel:
         return self.reply
 
 
+def test_should_rewrite_accepts_short_or_elliptical_messages() -> None:
+    resolver = OpenCodeFollowUpResolver(FakeLanguageModel())
+
+    assert resolver.should_rewrite("e no cartão?") is True
+    assert resolver.should_rewrite("agora") is True
+    assert (
+        resolver.should_rewrite(
+            "quanto eu gastei com transporte na semana passada inteira?"
+        )
+        is False
+    )
+
+
 async def test_rewrite_returns_the_model_answer() -> None:
     model = FakeLanguageModel("quanto gastei de uber no cartão em outubro?")
     resolver = OpenCodeFollowUpResolver(model)

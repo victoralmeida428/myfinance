@@ -7,6 +7,8 @@ instead of guessing.
 
 from __future__ import annotations
 
+import re
+
 from myfinance.domain.banking import BankingIntent
 from myfinance.infrastructure.parsing.dates import normalize
 
@@ -15,13 +17,32 @@ def _phrases(*words: str) -> tuple[str, ...]:
     return tuple(normalize(word) for word in words)
 
 
+# Pronouns and filler words break the contiguous "quanto tenho" phrase, so the
+# common account questions are also matched structurally.
+_ACCOUNTS_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\bquanto\s+(?:eu\s+|a gente\s+|nos\s+)?(?:tenho|tem|temos)"
+        r"(?:\s+(?:de\s+)?(?:saldo|dinheiro|grana|disponivel|guardado)"
+        r"|\s+(?:hoje|agora|atualmente))?\s*[?!.]*$",
+        r"\bquanto\s+(?:eu\s+|a gente\s+|nos\s+)?(?:tenho|tem|temos)"
+        r"\s+(?:na|em|no)\s+(?:minha\s+|nossa\s+)?(?:conta|banco|caixa)\b",
+        r"\b(?:tenho|tem|temos)\s+quanto"
+        r"\s+(?:na|em|no)\s+(?:minha\s+|nossa\s+)?(?:conta|banco|caixa)\b",
+        r"\bsaldo\b",
+        r"\bcontas?\s+conectadas?\b",
+        r"\bconta\s+corrente\b",
+        r"\bcontas\b",
+    )
+)
+
+
 _STRONG_INTENTS: tuple[tuple[BankingIntent, tuple[str, ...]], ...] = (
     (
         BankingIntent.ACCOUNTS,
         _phrases(
             "saldo",
             "contas",
-            "quanto tenho",
             "conta corrente",
             "contas conectadas",
         ),
@@ -78,6 +99,9 @@ class KeywordIntentRouter:
         :class:`CompositeIntentRouter` uses it to decide whether to ask Jev.
         """
         normalized = normalize(text)
+
+        if any(pattern.search(normalized) for pattern in _ACCOUNTS_PATTERNS):
+            return BankingIntent.ACCOUNTS
 
         for intent, phrases in _STRONG_INTENTS:
             if any(phrase in normalized for phrase in phrases):

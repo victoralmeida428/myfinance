@@ -43,16 +43,11 @@ def build_telegram_application(
     token = _require_token(settings)
     owner = filters.User(user_id=_require_owner(settings))
     handlers = BotHandlers(
-        handle_message=container.handle_message,
+        conversation=container.conversation,
         summary=container.summary,
         details=container.details,
         updates=container.updates,
-        period_summary=container.period_summary,
-        banking=container.banking,
         register_item=container.register_item,
-        explain_failure=container.explain_failure,
-        memory=container.memory,
-        follow_up=container.follow_up,
     )
 
     application = (

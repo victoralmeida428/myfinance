@@ -8,7 +8,6 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from myfinance.application import use_cases
 from myfinance.application.errors import ProviderError
 from myfinance.application.use_cases import (
     ExplainFailureUseCase,
@@ -117,12 +116,9 @@ async def test_blank_explanation_raises_provider_error() -> None:
         )
 
 
-async def test_slow_explanation_times_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(use_cases, "_EXPLANATION_TIMEOUT_SECONDS", 0.01)
+async def test_slow_explanation_times_out() -> None:
     model = RecordingLanguageModel("tarde demais", delay=0.05)
-    use_case = ExplainFailureUseCase(model)
+    use_case = ExplainFailureUseCase(model, timeout_seconds=0.01)
 
     with pytest.raises(ProviderError):
         await use_case.execute(

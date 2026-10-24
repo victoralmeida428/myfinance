@@ -23,8 +23,15 @@ Exemplos:
 
 Perguntas de gasto:
 "quanto gastei com uber esse mês?"
+"meus gastos com uber"
 "quanto gastei com alimentos?"
 "quanto em posto de gasolina?"
+
+Também respondo:
+"qual meu saldo"
+"extrato de hoje"
+"qual foi o mês que eu mais gastei?"
+"onde posso cortar gastos?"
 
 Categorias: Alimentação, Transporte, Lazer, Saúde, Serviços, Outros."""
 

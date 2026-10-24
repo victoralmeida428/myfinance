@@ -12,6 +12,7 @@ from myfinance.application.dto import (
     SpendingPlanMessage,
     SpendingQuery,
 )
+from myfinance.application.intents import RoutingDecision
 from myfinance.domain.banking import (
     BankAccount,
     BankExpense,
@@ -39,6 +40,7 @@ __all__ = [
     "IntentRouter",
     "LanguageModel",
     "LLMGate",
+    "MessageIntentRouter",
     "MessageParser",
     "PluggyItemRepository",
     "ProcessedUpdateRepository",
@@ -91,7 +93,9 @@ class ConversationMemory(Protocol):
 
 
 class FollowUpResolver(Protocol):
-    """Rewrites an elliptical follow-up into a standalone question."""
+    """Decides when context is needed and rewrites an elliptical follow-up."""
+
+    def should_rewrite(self, text: str) -> bool: ...
 
     async def rewrite(
         self, text: str, history: Sequence[ChatMessage]
@@ -134,6 +138,12 @@ class MessageParser(Protocol):
     """Extracts a structured entry from a free-form user message."""
 
     async def parse(self, text: str, *, today: date) -> ParsedMessage | None: ...
+
+
+class MessageIntentRouter(Protocol):
+    """Chooses the intent of a free-form message before dispatching it."""
+
+    async def route(self, text: str) -> RoutingDecision: ...
 
 
 class SpendingQueryParser(Protocol):

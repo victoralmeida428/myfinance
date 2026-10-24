@@ -23,6 +23,9 @@ from myfinance.infrastructure.parsing.deterministic import (
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
 )
+from myfinance.infrastructure.routing.messages import (
+    DeterministicMessageIntentRouter,
+)
 
 TODAY = date(2026, 10, 20)
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
@@ -57,13 +60,12 @@ def build_use_case(
     clock = FixedClock(NOW)
     resolver = PortugueseDateResolver()
     return HandleMessageUseCase(
+        DeterministicMessageIntentRouter(summary_gate),
         DeterministicMessageParser(resolver),
         RegisterEntryUseCase(repository, clock),
         clock,
         GetDailySummaryUseCase(repository, clock, resolver),
         PortugueseDateReferenceExtractor(),
-        None,
-        summary_gate,
     )
 
 

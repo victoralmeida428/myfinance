@@ -16,16 +16,11 @@ from myfinance.presentation.telegram.handlers import BotHandlers
 def make_container() -> SimpleNamespace:
     """A container whose use cases are never invoked by these tests."""
     return SimpleNamespace(
-        handle_message=None,
+        conversation=None,
         summary=None,
         details=None,
         updates=None,
-        period_summary=None,
-        banking=None,
         register_item=None,
-        explain_failure=None,
-        memory=None,
-        follow_up=None,
     )
 
 

@@ -1,7 +1,7 @@
 """Composition root for the Telegram bot.
 
 Only this module knows which infrastructure adapters implement the application
-ports. Handlers receive ready-to-use use cases.
+ports. Handlers receive the conversation and the command use cases ready to use.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from myfinance.application.ports import (
     ConversationMemory,
     FollowUpResolver,
     LanguageModel,
-    MessageParser,
     ProcessedUpdateRepository,
     SpendingQueryParser,
 )
@@ -22,8 +21,10 @@ from myfinance.application.use_cases import (
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
     GetSpendingPlanUseCase,
+    GetSummaryUseCase,
     GetTopSpendingMonthUseCase,
     HandleBankingQueryUseCase,
+    HandleConversationMessageUseCase,
     HandleMessageUseCase,
     RegisterEntryUseCase,
     RegisterPluggyItemUseCase,
@@ -62,6 +63,7 @@ from myfinance.infrastructure.pluggy_bank_expenses import (
 from myfinance.infrastructure.pluggy_banking import PluggyBankingProvider
 from myfinance.infrastructure.routing import (
     CompositeIntentRouter,
+    CompositeMessageIntentRouter,
     JevIntentRouter,
     KeywordIntentRouter,
 )
@@ -73,24 +75,25 @@ from myfinance.infrastructure.sqlite import (
     SqlitePluggyItemRepository,
     SqliteProcessedUpdateRepository,
 )
+from myfinance.presentation.telegram.conversation import TelegramConversation
 
-__all__ = ["BotContainer", "build_container"]
+__all__ = [
+    "BotContainer",
+    "build_container",
+    "build_follow_up_resolver",
+    "build_spending_parser",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class BotContainer:
-    """Use cases and gateways the Telegram handlers need."""
+    """Entry points the Telegram handlers need."""
 
-    handle_message: HandleMessageUseCase
-    summary: GetDailySummaryUseCase
+    conversation: TelegramConversation
+    summary: GetSummaryUseCase
     details: GetDayDetailsUseCase
     updates: ProcessedUpdateRepository
-    period_summary: GetPeriodSummaryUseCase
-    banking: HandleBankingQueryUseCase
     register_item: RegisterPluggyItemUseCase
-    explain_failure: ExplainFailureUseCase | None
-    memory: ConversationMemory
-    follow_up: FollowUpResolver | None
 
 
 def build_container(settings: Settings) -> BotContainer:
@@ -101,34 +104,21 @@ def build_container(settings: Settings) -> BotContainer:
     entries = SqliteEntryRepository(database)
     updates = SqliteProcessedUpdateRepository(database)
 
-    keyword = KeywordCategoryClassifier()
-    if _has_categorizer_token(settings):
-        classifier = FallbackCategoryClassifier(
-            JevCategoryClassifier(settings), keyword
-        )
-    else:
-        classifier = keyword
-    deterministic = DeterministicMessageParser(resolver, classifier)
-    llm: MessageParser | None = None
-    explain_failure: ExplainFailureUseCase | None = None
-    model: LanguageModel | None = None
-    spending_parser: SpendingQueryParser
-    if _has_opencode_key(settings):
-        model = OpenCodeLanguageModel(settings)
-        llm = OpenCodeMessageParser(model, classifier)
-        explain_failure = ExplainFailureUseCase(model)
-        spending_parser = OpenCodeSpendingQueryParser(model)
-    else:
-        spending_parser = DeterministicSpendingQueryParser()
+    classifier = _build_classifier(settings)
+    model = _build_model(settings)
+    explain_failure = ExplainFailureUseCase(model) if model is not None else None
+
     parser = CompositeMessageParser(
-        deterministic,
-        llm,
+        DeterministicMessageParser(resolver, classifier),
+        OpenCodeMessageParser(model, classifier) if model is not None else None,
         JevLLMGate(settings) if _has_categorizer_token(settings) else None,
     )
 
     register = RegisterEntryUseCase(entries, clock)
     summary_gate = (
-        JevSummaryIntentGate(settings) if _has_categorizer_token(settings) else None
+        JevSummaryIntentGate(settings)
+        if _has_categorizer_token(settings)
+        else None
     )
 
     items = SqlitePluggyItemRepository(database)
@@ -138,12 +128,17 @@ def build_container(settings: Settings) -> BotContainer:
     summary = GetDailySummaryUseCase(entries, clock, resolver, bank_expenses)
     period_summary = GetPeriodSummaryUseCase(entries, clock, bank_expenses)
     top_month = GetTopSpendingMonthUseCase(entries, bank_expenses, clock)
+
     keyword_intent = KeywordIntentRouter()
     jev_intent = JevIntentRouter(settings) if _has_categorizer_token(settings) else None
-    router = CompositeIntentRouter(keyword_intent, jev_intent)
+    banking_router = CompositeIntentRouter(keyword_intent, jev_intent)
+    message_router = CompositeMessageIntentRouter(
+        keyword_intent, jev_intent, summary_gate
+    )
+
     register_item = RegisterPluggyItemUseCase(items, clock)
     banking = HandleBankingQueryUseCase(
-        router,
+        banking_router,
         items,
         provider,
         banking_repository,
@@ -157,48 +152,79 @@ def build_container(settings: Settings) -> BotContainer:
         clock,
         PortugueseDateReferenceExtractor(),
         resolver,
-        spending_parser,
-    )
-    narrator = (
-        OpenCodeSpendingPlanNarrator(model) if model is not None else None
+        build_spending_parser(settings, model),
     )
     spending_plan = GetSpendingPlanUseCase(
         entries,
         bank_expenses,
         clock,
-        narrator,
+        OpenCodeSpendingPlanNarrator(model) if model is not None else None,
+    )
+    messages = HandleMessageUseCase(
+        message_router,
+        parser,
+        register,
+        clock,
+        summary,
+        PortugueseDateReferenceExtractor(),
+        period_summary,
+        top_month,
+        spending_search,
+        spending_plan,
     )
 
     memory = SqliteConversationMemory(database)
-    follow_up = (
-        OpenCodeFollowUpResolver(model)
-        if _has_opencode_key(settings) and model is not None
-        else None
-    )
+    follow_up = build_follow_up_resolver(settings, model)
 
     return BotContainer(
-        handle_message=HandleMessageUseCase(
-            parser,
-            register,
-            clock,
-            summary,
-            PortugueseDateReferenceExtractor(),
-            period_summary,
-            summary_gate,
-            top_month,
-            spending_search,
-            spending_plan,
+        conversation=TelegramConversation(
+            incoming=HandleConversationMessageUseCase(
+                message_router, banking, messages
+            ),
+            memory=memory,
+            follow_up=follow_up,
+            explain_failure=explain_failure,
         ),
-        summary=summary,
+        summary=GetSummaryUseCase(period_summary, summary),
         details=GetDayDetailsUseCase(entries, clock, resolver),
         updates=updates,
-        period_summary=period_summary,
-        banking=banking,
         register_item=register_item,
-        explain_failure=explain_failure,
-        memory=memory,
-        follow_up=follow_up,
     )
+
+
+def build_spending_parser(
+    settings: Settings, model: LanguageModel | None
+) -> SpendingQueryParser:
+    """Choose the LLM parser when a model is configured, else the fallback."""
+    if model is not None and _has_opencode_key(settings):
+        return OpenCodeSpendingQueryParser(model)
+    return DeterministicSpendingQueryParser()
+
+
+def build_follow_up_resolver(
+    settings: Settings, model: LanguageModel | None
+) -> FollowUpResolver | None:
+    """Build the follow-up resolver only when a language model is available."""
+    if model is None or not _has_opencode_key(settings):
+        return None
+    return OpenCodeFollowUpResolver(model)
+
+
+def _build_classifier(
+    settings: Settings,
+) -> KeywordCategoryClassifier | FallbackCategoryClassifier:
+    keyword = KeywordCategoryClassifier()
+    if _has_categorizer_token(settings):
+        return FallbackCategoryClassifier(
+            JevCategoryClassifier(settings), keyword
+        )
+    return keyword
+
+
+def _build_model(settings: Settings) -> LanguageModel | None:
+    if not _has_opencode_key(settings):
+        return None
+    return OpenCodeLanguageModel(settings)
 
 
 def _has_opencode_key(settings: Settings) -> bool:

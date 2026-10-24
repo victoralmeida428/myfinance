@@ -44,8 +44,13 @@ def test_help_text_documents_the_data_commands() -> None:
     "phrase",
     [
         "quanto gastei com uber esse mês?",
+        "meus gastos com uber",
         "quanto gastei com alimentos?",
         "quanto em posto de gasolina?",
+        "qual meu saldo",
+        "extrato de hoje",
+        "qual foi o mês que eu mais gastei?",
+        "onde posso cortar gastos?",
     ],
 )
 def test_help_text_documents_spending_questions(phrase: str) -> None:

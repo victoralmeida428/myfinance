@@ -1,18 +1,33 @@
-"""Unit tests for the Telegram composition root's spending-search wiring."""
+"""Unit tests for the Telegram composition root's public wiring."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from uuid import uuid4
 
+from myfinance.application.use_cases import (
+    GetDayDetailsUseCase,
+    GetSummaryUseCase,
+    RegisterPluggyItemUseCase,
+)
 from myfinance.config import Settings
 from myfinance.infrastructure.parsing.follow_up import OpenCodeFollowUpResolver
 from myfinance.infrastructure.parsing.spending_query import (
     DeterministicSpendingQueryParser,
     OpenCodeSpendingQueryParser,
 )
-from myfinance.infrastructure.sqlite import SqliteConversationMemory
-from myfinance.presentation.telegram.composition import build_container
+from myfinance.infrastructure.sqlite import SqliteProcessedUpdateRepository
+from myfinance.presentation.telegram.composition import (
+    build_container,
+    build_follow_up_resolver,
+    build_spending_parser,
+)
+from myfinance.presentation.telegram.conversation import TelegramConversation
+
+
+class FakeModel:
+    async def complete(self, messages, *, session_id=None) -> str:
+        return "ok"
 
 
 def make_settings(tmp_path: Path, *, opencode_api_key: str | None) -> Settings:
@@ -26,66 +41,46 @@ def make_settings(tmp_path: Path, *, opencode_api_key: str | None) -> Settings:
     )
 
 
-def test_build_container_uses_opencode_parser_when_key_present(
-    tmp_path: Path,
-) -> None:
-    container = build_container(
-        make_settings(tmp_path, opencode_api_key="test-key")
+def test_build_spending_parser_uses_opencode_with_a_key(tmp_path: Path) -> None:
+    parser = build_spending_parser(
+        make_settings(tmp_path, opencode_api_key="test-key"), FakeModel()
     )
 
-    # The container exposes use cases, so observe the parser wiring through
-    # the use case that owns it.
-    search = container.handle_message._spending_search
-    assert search is not None
-    assert isinstance(search._parser, OpenCodeSpendingQueryParser)
+    assert isinstance(parser, OpenCodeSpendingQueryParser)
 
 
-def test_build_container_uses_deterministic_parser_without_key(
-    tmp_path: Path,
-) -> None:
-    container = build_container(make_settings(tmp_path, opencode_api_key=None))
-
-    search = container.handle_message._spending_search
-    assert search is not None
-    assert isinstance(search._parser, DeterministicSpendingQueryParser)
-
-
-def test_build_container_reuses_one_language_model(tmp_path: Path) -> None:
-    container = build_container(
-        make_settings(tmp_path, opencode_api_key="test-key")
+def test_build_spending_parser_falls_back_without_a_key(tmp_path: Path) -> None:
+    parser = build_spending_parser(
+        make_settings(tmp_path, opencode_api_key=None), None
     )
 
-    llm_parser = container.handle_message._parser._fallback
-    explain_failure = container.explain_failure
-    search = container.handle_message._spending_search
-    assert llm_parser is not None
-    assert explain_failure is not None
-    assert search is not None
-    assert llm_parser._model is explain_failure._model
-    assert llm_parser._model is search._parser._model
+    assert isinstance(parser, DeterministicSpendingQueryParser)
 
 
-def test_build_container_always_builds_the_conversation_memory(
+def test_build_follow_up_resolver_requires_both_key_and_model(
     tmp_path: Path,
 ) -> None:
-    container = build_container(make_settings(tmp_path, opencode_api_key=None))
+    with_key = make_settings(tmp_path, opencode_api_key="test-key")
+    without_key = make_settings(tmp_path, opencode_api_key=None)
 
-    assert isinstance(container.memory, SqliteConversationMemory)
-
-
-def test_build_container_builds_the_follow_up_resolver_with_a_key(
-    tmp_path: Path,
-) -> None:
-    container = build_container(
-        make_settings(tmp_path, opencode_api_key="test-key")
+    assert isinstance(
+        build_follow_up_resolver(with_key, FakeModel()),
+        OpenCodeFollowUpResolver,
     )
+    assert build_follow_up_resolver(without_key, FakeModel()) is None
+    assert build_follow_up_resolver(with_key, None) is None
 
-    assert isinstance(container.follow_up, OpenCodeFollowUpResolver)
 
-
-def test_build_container_without_a_key_has_no_follow_up_resolver(
+def test_build_container_exposes_only_the_handler_entry_points(
     tmp_path: Path,
 ) -> None:
-    container = build_container(make_settings(tmp_path, opencode_api_key=None))
+    for key in (None, "test-key"):
+        container = build_container(
+            make_settings(tmp_path, opencode_api_key=key)
+        )
 
-    assert container.follow_up is None
+        assert isinstance(container.conversation, TelegramConversation)
+        assert isinstance(container.summary, GetSummaryUseCase)
+        assert isinstance(container.details, GetDayDetailsUseCase)
+        assert isinstance(container.updates, SqliteProcessedUpdateRepository)
+        assert isinstance(container.register_item, RegisterPluggyItemUseCase)

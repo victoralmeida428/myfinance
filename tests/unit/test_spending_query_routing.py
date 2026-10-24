@@ -7,8 +7,8 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from myfinance.application import use_cases as use_cases_module
 from myfinance.application.dto import (
+    HelpMessage,
     RegisteredMessage,
     SpendingAnswerMessage,
     SpendingPlanMessage,
@@ -30,6 +30,9 @@ from myfinance.infrastructure.parsing.deterministic import (
 )
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
+)
+from myfinance.infrastructure.routing.messages import (
+    DeterministicMessageIntentRouter,
 )
 
 TODAY = date(2026, 10, 20)
@@ -142,23 +145,36 @@ def build_use_case(
     repository: InMemoryEntryRepository | None = None,
     summary_gate: FakeSummaryGate | None = None,
     plan: FakeSpendingPlan | None = None,
+    *,
+    search_timeout: float = 45.0,
+    plan_timeout: float = 60.0,
 ) -> tuple[HandleMessageUseCase, InMemoryEntryRepository]:
     repository = repository or InMemoryEntryRepository()
     clock = FixedClock(NOW)
     resolver = PortugueseDateResolver()
     use_case = HandleMessageUseCase(
+        DeterministicMessageIntentRouter(summary_gate),
         DeterministicMessageParser(resolver),
         RegisterEntryUseCase(repository, clock),
         clock,
         GetDailySummaryUseCase(repository, clock, resolver),
         PortugueseDateReferenceExtractor(),
         GetPeriodSummaryUseCase(repository, clock),
-        summary_gate,
         GetTopSpendingMonthUseCase(repository, FakeBankExpenses(), clock),
         search,
         plan,
+        search_timeout=search_timeout,
+        plan_timeout=plan_timeout,
     )
     return use_case, repository
+
+
+async def test_capability_question_returns_the_help_message() -> None:
+    use_case, _ = build_use_case()
+
+    result = await use_case.execute("O que você pode fazer?")
+
+    assert isinstance(result, HelpMessage)
 
 
 async def test_subject_query_with_month_is_answered_by_the_search() -> None:
@@ -308,14 +324,9 @@ async def test_search_returning_none_falls_back_to_the_summary_flow() -> None:
     assert search.calls == ["quanto gastei com uber?"]
 
 
-async def test_search_timeout_raises_provider_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        use_cases_module, "_SPENDING_SEARCH_TIMEOUT_SECONDS", 0.01
-    )
+async def test_search_timeout_raises_provider_error() -> None:
     search = FakeSpendingSearch(ANSWER, delay=1.0)
-    use_case, _ = build_use_case(search)
+    use_case, _ = build_use_case(search, search_timeout=0.01)
 
     with pytest.raises(ProviderError, match="demorou demais"):
         await use_case.execute("quanto gastei com uber?")
@@ -428,12 +439,9 @@ async def test_bare_expense_never_reaches_the_spending_plan() -> None:
     assert len(repository.entries) == 1
 
 
-async def test_plan_timeout_raises_provider_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(use_cases_module, "_SPENDING_PLAN_TIMEOUT_SECONDS", 0.01)
+async def test_plan_timeout_raises_provider_error() -> None:
     plan = FakeSpendingPlan(delay=1.0)
-    use_case, _ = build_use_case(plan=plan)
+    use_case, _ = build_use_case(plan=plan, plan_timeout=0.01)
 
     with pytest.raises(ProviderError, match="plano de gastos demorou demais"):
         await use_case.execute("onde posso cortar gastos?")

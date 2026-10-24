@@ -17,8 +17,11 @@ __all__ = [
     "AccountsAnswer",
     "BankingAnswer",
     "CategoryPlan",
+    "ChatReply",
+    "DayDetails",
     "CutSuggestion",
     "HandleMessageResult",
+    "HelpMessage",
     "IdentityAnswer",
     "MerchantSpend",
     "MonthlyExpense",
@@ -64,6 +67,14 @@ class RegisteredMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class DayDetails:
+    """The resolved day together with its entries."""
+
+    day: date
+    entries: Sequence[Entry]
+
+
+@dataclass(frozen=True, slots=True)
 class SummaryMessage:
     """A message that asked for a daily or period summary instead of a registration."""
 
@@ -75,6 +86,11 @@ class NeedsClarification:
     """A message that could not be understood and needs a follow-up."""
 
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class HelpMessage:
+    """A request for the bot's capabilities and command reference."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +186,7 @@ HandleMessageResult: TypeAlias = (
     | SpendingAnswerMessage
     | SpendingPlanMessage
     | NeedsClarification
+    | HelpMessage
 )
 
 
@@ -204,3 +221,5 @@ class NoPluggyItem:
 type BankingAnswer = (
     AccountsAnswer | TransactionsAnswer | IdentityAnswer | NoPluggyItem
 )
+
+type ChatReply = BankingAnswer | HandleMessageResult

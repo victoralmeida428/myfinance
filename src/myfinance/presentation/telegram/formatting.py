@@ -14,16 +14,22 @@ from datetime import date
 from myfinance.application.dto import (
     AccountsAnswer,
     BankingAnswer,
+    ChatReply,
+    HelpMessage,
     IdentityAnswer,
+    NeedsClarification,
     NoPluggyItem,
+    RegisteredMessage,
     RegistrationResult,
     SpendingAnswerMessage,
     SpendingPlanMessage,
+    SummaryMessage,
     TopMonthMessage,
     TransactionsAnswer,
 )
 from myfinance.domain.categories import Category
 from myfinance.domain.entries import Entry, EntryKind
+from myfinance.presentation.telegram.commands import HELP_TEXT
 from myfinance.domain.summary import (
     BalanceStatus,
     CategoryBalance,
@@ -38,6 +44,7 @@ __all__ = [
     "format_details",
     "format_period_summary",
     "format_registration",
+    "format_reply",
     "format_spending_answer",
     "format_spending_plan",
     "format_summary",
@@ -114,6 +121,31 @@ def format_banking(answer: BankingAnswer) -> str:
     if isinstance(answer, TransactionsAnswer):
         return _format_transactions(answer)
     return _format_identity(answer)
+
+
+def format_reply(reply: ChatReply) -> str:
+    """Render any reply produced by the conversation flow."""
+    if isinstance(
+        reply, (AccountsAnswer, TransactionsAnswer, IdentityAnswer, NoPluggyItem)
+    ):
+        return format_banking(reply)
+    if isinstance(reply, RegisteredMessage):
+        return format_registration(reply.result)
+    if isinstance(reply, SummaryMessage):
+        if isinstance(reply.summary, PeriodSummary):
+            return format_period_summary(reply.summary)
+        return format_summary(reply.summary)
+    if isinstance(reply, TopMonthMessage):
+        return format_top_month(reply)
+    if isinstance(reply, SpendingAnswerMessage):
+        return format_spending_answer(reply)
+    if isinstance(reply, SpendingPlanMessage):
+        return format_spending_plan(reply)
+    if isinstance(reply, NeedsClarification):
+        return reply.reason
+    if isinstance(reply, HelpMessage):
+        return HELP_TEXT
+    raise TypeError(f"Unsupported reply: {type(reply).__name__}")
 
 
 def _format_accounts(answer: AccountsAnswer) -> str:

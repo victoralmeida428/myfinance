@@ -6,12 +6,13 @@ recent conversation to make the latest question understandable on its own.
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Sequence
 
 from myfinance.application.ports import LanguageModel
 from myfinance.domain.models import ChatMessage
 
-__all__ = ["OpenCodeFollowUpResolver"]
+__all__ = ["OpenCodeFollowUpResolver", "looks_like_follow_up"]
 
 _SYSTEM_PROMPT = (
     "Você ajuda a interpretar conversas sobre finanças pessoais em português "
@@ -28,12 +29,51 @@ _SYSTEM_PROMPT = (
 
 _ROLE_LABELS = {"user": "Usuário", "assistant": "Bot"}
 
+_FOLLOW_UP_PREFIXES = (
+    "e ",
+    "e,",
+    "tambem",
+    "agora",
+    "no cartao",
+    "na conta",
+    "desse",
+    "mesmo",
+    "e de",
+    "e em",
+    "e no",
+    "e na",
+)
+_MAX_FOLLOW_UP_WORDS = 6
+
+
+def _normalize(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    without_marks = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return " ".join(without_marks.lower().split())
+
+
+def looks_like_follow_up(text: str) -> bool:
+    """Return whether ``text`` is short or elliptical enough to need context."""
+    normalized = _normalize(text)
+    if not normalized:
+        return False
+    if len(normalized.split()) <= _MAX_FOLLOW_UP_WORDS:
+        return True
+    return normalized.startswith(_FOLLOW_UP_PREFIXES)
+
 
 class OpenCodeFollowUpResolver:
     """Asks a language model to make a follow-up question standalone."""
 
     def __init__(self, model: LanguageModel) -> None:
         self._model = model
+
+    def should_rewrite(self, text: str) -> bool:
+        return looks_like_follow_up(text)
 
     async def rewrite(
         self, text: str, history: Sequence[ChatMessage]

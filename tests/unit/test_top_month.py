@@ -22,6 +22,9 @@ from myfinance.infrastructure.parsing.deterministic import (
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
 )
+from myfinance.infrastructure.routing.messages import (
+    DeterministicMessageIntentRouter,
+)
 from myfinance.presentation.telegram.formatting import format_top_month
 
 TODAY = date(2026, 10, 20)
@@ -199,13 +202,13 @@ async def test_handle_message_routes_the_top_month_question() -> None:
     repository = _repository()
     exploding = ExplodingSummary()
     use_case = HandleMessageUseCase(
+        DeterministicMessageIntentRouter(FakeSummaryGate(True)),
         DeterministicMessageParser(PortugueseDateResolver()),
         RegisterEntryUseCase(repository, clock),
         clock,
         exploding,  # type: ignore[arg-type]
         PortugueseDateReferenceExtractor(),
         exploding,  # type: ignore[arg-type]
-        FakeSummaryGate(True),
         GetTopSpendingMonthUseCase(repository, _bank_expenses(), clock),
     )
 

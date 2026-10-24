@@ -17,6 +17,7 @@ from myfinance.application.use_cases import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
     GetPeriodSummaryUseCase,
+    GetSummaryUseCase,
     HandleMessageUseCase,
     RegisterEntryUseCase,
 )
@@ -30,6 +31,9 @@ from myfinance.infrastructure.parsing.deterministic import (
 )
 from myfinance.infrastructure.parsing.references import (
     PortugueseDateReferenceExtractor,
+)
+from myfinance.infrastructure.routing.messages import (
+    DeterministicMessageIntentRouter,
 )
 from myfinance.infrastructure.sqlite import SqliteDatabase, SqliteEntryRepository
 from myfinance.presentation.telegram.handlers import BotHandlers
@@ -85,6 +89,11 @@ class FakeMessage:
         self.replies.append(text)
 
 
+class UnusedConversation:
+    async def failure_text(self, question: str, error: Exception) -> str:
+        return "erro"
+
+
 def make_entry(
     day: date,
     *,
@@ -107,6 +116,7 @@ def build_use_case(repository: InMemoryEntryRepository) -> HandleMessageUseCase:
     clock = FixedClock(NOW)
     resolver = PortugueseDateResolver()
     return HandleMessageUseCase(
+        DeterministicMessageIntentRouter(),
         DeterministicMessageParser(resolver),
         RegisterEntryUseCase(repository, clock),
         clock,
@@ -122,18 +132,10 @@ def build_handlers(repository: InMemoryEntryRepository) -> BotHandlers:
     summary = GetDailySummaryUseCase(repository, clock, resolver)
     period = GetPeriodSummaryUseCase(repository, clock)
     return BotHandlers(
-        handle_message=HandleMessageUseCase(
-            DeterministicMessageParser(resolver),
-            RegisterEntryUseCase(repository, clock),
-            clock,
-            summary,
-            PortugueseDateReferenceExtractor(),
-            period,
-        ),
-        summary=summary,
+        conversation=UnusedConversation(),  # type: ignore[arg-type]
+        summary=GetSummaryUseCase(period, summary),
         details=GetDayDetailsUseCase(repository, clock, resolver),
         updates=InMemoryProcessedUpdates(),
-        period_summary=period,
     )
 
 
