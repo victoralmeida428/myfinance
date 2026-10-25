@@ -34,6 +34,7 @@ __all__ = [
     "RegisteredMessage",
     "RegistrationResult",
     "SpendingAnswerMessage",
+    "SpendingComparisonMessage",
     "SpendingPlanMessage",
     "SpendingQuery",
     "SummaryMessage",
@@ -163,6 +164,24 @@ class SpendingAnswerMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class SpendingComparisonMessage:
+    """A subject compared between the current and the previous month."""
+
+    label: str
+    current_start: date
+    current_end: date
+    current_total_cents: int
+    current_count: int
+    previous_start: date
+    previous_end: date
+    previous_total_cents: int
+    previous_count: int
+    delta_cents: int
+    delta_percent: int | None
+    narrative: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CategoryPlan:
     """One category's spending in the analyzed window and the one before it."""
 
@@ -212,6 +231,7 @@ HandleMessageResult: TypeAlias = (
     | SummaryMessage
     | TopMonthMessage
     | SpendingAnswerMessage
+    | SpendingComparisonMessage
     | SpendingPlanMessage
     | NeedsClarification
     | HelpMessage

@@ -74,6 +74,7 @@ async def test_classifier_sends_the_expected_systemone_request() -> None:
     assert body["state"] == "resumo da semana"
     criteria = body["questions"]["intent"]["criteria"]
     assert "spending_search" in criteria
+    assert "spending_comparison" in criteria
     assert "period_details" in criteria
     assert "help" in criteria
     assert "income" in criteria
@@ -90,6 +91,11 @@ async def test_classifier_sends_the_expected_systemone_request() -> None:
         ),
         ("banking_identity", MessageIntent.BANKING, BankingIntent.IDENTITY),
         ("spending_search", MessageIntent.SPENDING_SEARCH, None),
+        (
+            "spending_comparison",
+            MessageIntent.SPENDING_COMPARISON,
+            None,
+        ),
         ("spending_plan", MessageIntent.SPENDING_PLAN, None),
         ("top_month", MessageIntent.TOP_MONTH, None),
         ("summary", MessageIntent.SUMMARY, None),

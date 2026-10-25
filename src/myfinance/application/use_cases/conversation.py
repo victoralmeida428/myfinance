@@ -21,6 +21,9 @@ from myfinance.application.ports import (
 )
 from myfinance.application.use_cases.banking import HandleBankingQueryUseCase
 from myfinance.application.use_cases.common import run_with_timeout
+from myfinance.application.use_cases.comparison import (
+    CompareSpendingUseCase,
+)
 from myfinance.application.use_cases.entries import (
     GetDailySummaryUseCase,
     GetPeriodDetailsUseCase,
@@ -56,6 +59,7 @@ class HandleMessageUseCase:
         spending_search: SearchSpendingUseCase | None = None,
         spending_plan: GetSpendingPlanUseCase | None = None,
         period_details: GetPeriodDetailsUseCase | None = None,
+        spending_comparison: CompareSpendingUseCase | None = None,
         *,
         search_timeout: float = _SPENDING_SEARCH_TIMEOUT_SECONDS,
         plan_timeout: float = _SPENDING_PLAN_TIMEOUT_SECONDS,
@@ -72,6 +76,7 @@ class HandleMessageUseCase:
         self._spending_search = spending_search
         self._spending_plan = spending_plan
         self._period_details = period_details
+        self._spending_comparison = spending_comparison
         self._search_timeout = search_timeout
         self._plan_timeout = plan_timeout
         self._top_month_timeout = top_month_timeout
@@ -90,6 +95,21 @@ class HandleMessageUseCase:
 
         if intent is MessageIntent.PERIOD_DETAILS and self._period_details:
             return await self._period_details.execute(text)
+
+        if intent is MessageIntent.SPENDING_COMPARISON:
+            if self._spending_comparison is not None:
+                answer = await run_with_timeout(
+                    self._spending_comparison.execute(text),
+                    self._search_timeout,
+                    "A comparação de gastos demorou demais. Tente novamente.",
+                )
+                if answer is not None:
+                    return answer
+                return NeedsClarification(
+                    "Não consegui identificar o assunto da comparação. "
+                    "Tente algo como: \"quanto gastei com uber neste mês "
+                    "comparado ao mês passado?\"."
+                )
 
         if intent is MessageIntent.SPENDING_SEARCH and self._spending_search:
             answer = await run_with_timeout(
@@ -116,6 +136,7 @@ class HandleMessageUseCase:
 
         if intent in {
             MessageIntent.SPENDING_SEARCH,
+            MessageIntent.SPENDING_COMPARISON,
             MessageIntent.SPENDING_PLAN,
             MessageIntent.TOP_MONTH,
             MessageIntent.SUMMARY,

@@ -49,9 +49,13 @@ class SearchSpendingUseCase:
         self._dates = dates
         self._parser = parser
 
+    async def parse(self, text: str) -> SpendingQuery | None:
+        """Extract the subject and period filters from a free-form question."""
+        return await self._parser.parse(text, today=self._clock.today())
+
     async def execute(self, text: str) -> SpendingAnswerMessage | None:
         today = self._clock.today()
-        query = await self._parser.parse(text, today=today)
+        query = await self.parse(text)
         if query is None:
             return None
         if query.category is None and not any(
@@ -62,6 +66,27 @@ class SearchSpendingUseCase:
         start, end = self._resolve_period(
             query.period_reference or text, text, today
         )
+        total_cents, count = await self.summarize(query, start, end)
+
+        label = (
+            query.category.label
+            if query.category is not None
+            else ", ".join(query.keywords)
+        )
+        return SpendingAnswerMessage(
+            start=start,
+            end=end,
+            label=label,
+            total_cents=total_cents,
+            count=count,
+            category=query.category,
+            keywords=query.keywords,
+        )
+
+    async def summarize(
+        self, query: SpendingQuery, start: date, end: date
+    ) -> tuple[int, int]:
+        """Return the total and the number of matches in an inclusive window."""
         entries = await self._entries.list_between(start, end)
         bank_expenses: Sequence[BankExpense] = ()
         if self._bank_expenses is not None:
@@ -96,21 +121,7 @@ class SearchSpendingUseCase:
                 ),
             ):
                 amounts.append(getattr(expense, "amount_cents", 0))
-
-        label = (
-            query.category.label
-            if query.category is not None
-            else ", ".join(query.keywords)
-        )
-        return SpendingAnswerMessage(
-            start=start,
-            end=end,
-            label=label,
-            total_cents=sum(amounts),
-            count=len(amounts),
-            category=query.category,
-            keywords=query.keywords,
-        )
+        return sum(amounts), len(amounts)
 
     def _resolve_period(
         self, reference: str, text: str, today: date

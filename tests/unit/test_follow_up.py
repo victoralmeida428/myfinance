@@ -42,6 +42,18 @@ def test_should_rewrite_accepts_short_or_elliptical_messages() -> None:
     assert resolver.should_rewrite("no cartão?") is True
     assert resolver.should_rewrite("nesse mês?") is True
     assert resolver.should_rewrite("agora") is True
+    assert (
+        resolver.should_rewrite(
+            "isso é mais ou menos do que no mês passado?"
+        )
+        is True
+    )
+    assert (
+        resolver.should_rewrite(
+            "comparado com o mês passado, foi mais?"
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -57,6 +69,8 @@ def test_should_rewrite_accepts_short_or_elliptical_messages() -> None:
         "meus gastos com uber",
         "onde posso cortar gastos?",
         "45",
+        "Uber 10/09/2026 500",
+        "Almoço hoje 45",
         "quanto eu gastei com transporte na semana passada inteira?",
     ],
 )
@@ -97,6 +111,8 @@ async def test_system_prompt_asks_for_standalone_brazilian_portuguese() -> None:
     assert "pergunta independente" in system_prompt
     assert "português do Brasil" in system_prompt
     assert "Nunca invente valores" in system_prompt
+    assert "comparação" in system_prompt
+    assert "dois períodos" in system_prompt
 
 
 async def test_blank_text_returns_none_without_calling_the_model() -> None:

@@ -37,6 +37,14 @@ _DETAIL_PATTERNS = (
     r"\blista\s+(?:de\s+|dos\s+|das\s+)?(?:lancamentos?|gastos)\b",
 )
 
+_COMPARISON_PATTERNS = (
+    r"\b(?:mais|menos)\b.*\b(?:que|do que)\b.*\b(?:mes|semana|ano|periodo)\b",
+    r"\bcomparad[oa]s?\b.*\b(?:mes|semana|ano|periodo)\b",
+    r"\bem (?:comparacao|relacao)\b.*\b(?:mes|semana|ano|periodo)\b",
+    r"\bdo que (?:o |no )?mes (?:passado|anterior)\b",
+    r"\b(?:versus|vs)\b.*\b(?:mes|semana|ano|periodo)\b",
+)
+
 _HELP_PATTERNS = (
     r"\bo que\s+(?:voce|vc|tu)\s+(?:pode|consegue|sabe)\s+fazer\b",
     r"\bo que\s+(?:voce|vc|tu)\s+faz\b",
@@ -143,6 +151,34 @@ _SPENDING_QUERY_STOPWORDS = frozenset(
         "como",
         "estao",
         "quero",
+        "comparado",
+        "neste",
+        "nesse",
+        "nesta",
+        "nessa",
+        "deste",
+        "desse",
+        "desta",
+        "dessa",
+        "ao",
+        "aos",
+        "ou",
+        "isso",
+        "esse",
+        "essa",
+        "valor",
+        "total",
+        "quantia",
+        "comparada",
+        "comparacao",
+        "relacao",
+        "versus",
+        "vs",
+        "mais",
+        "menos",
+        "anterior",
+        "retrasado",
+        "retrasada",
         "recebi",
         "recebo",
         "recebe",
@@ -283,6 +319,13 @@ def _asks_for_income(text: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in _INCOME_PATTERNS)
 
 
+def _asks_for_spending_comparison(text: str) -> bool:
+    normalized = normalize(text)
+    return any(
+        re.search(pattern, normalized) for pattern in _COMPARISON_PATTERNS
+    )
+
+
 def _asks_for_period_details(text: str) -> bool:
     normalized = normalize(text)
     return any(re.search(pattern, normalized) for pattern in _DETAIL_PATTERNS)
@@ -362,6 +405,8 @@ class DeterministicMessageIntentRouter:
             return RoutingDecision(MessageIntent.INCOME)
         if _asks_for_period_details(text):
             return RoutingDecision(MessageIntent.PERIOD_DETAILS)
+        if _asks_for_spending_comparison(text):
+            return RoutingDecision(MessageIntent.SPENDING_COMPARISON)
         if _looks_like_spending_query(text):
             return RoutingDecision(MessageIntent.SPENDING_SEARCH)
         if _asks_for_spending_plan(text):

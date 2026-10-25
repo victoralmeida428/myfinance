@@ -116,6 +116,20 @@ async def test_period_details_question_routes_to_details() -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        "isso é mais ou menos do que no mês passado?",
+        "quanto gastei com uber neste mês comparado ao mês passado?",
+        "comparado com o mês passado, foi mais?",
+    ],
+)
+async def test_spending_comparison_routes_to_comparison(text: str) -> None:
+    decision = await build_router().route(text)
+
+    assert decision.intent is MessageIntent.SPENDING_COMPARISON
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "meus gastos com uber",
         "gastos de uber",
         "gastos com alimentação",

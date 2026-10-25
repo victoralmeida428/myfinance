@@ -36,6 +36,11 @@ _CRITERIA: dict[str, str] = {
         "Quanto gastei com um estabelecimento, categoria, lugar ou termo, em "
         "um período."
     ),
+    "spending_comparison": (
+        "Comparação entre dois períodos, como 'isso é mais ou menos do que no "
+        "mês passado?' ou 'quanto gastei com uber neste mês comparado ao mês "
+        "passado?'."
+    ),
     "spending_plan": (
         "Plano de gastos, onde cortar, como economizar ou dicas de economia."
     ),
@@ -64,6 +69,9 @@ _DECISIONS: dict[str, RoutingDecision] = {
         MessageIntent.BANKING, BankingIntent.IDENTITY
     ),
     "spending_search": RoutingDecision(MessageIntent.SPENDING_SEARCH),
+    "spending_comparison": RoutingDecision(
+        MessageIntent.SPENDING_COMPARISON
+    ),
     "spending_plan": RoutingDecision(MessageIntent.SPENDING_PLAN),
     "top_month": RoutingDecision(MessageIntent.TOP_MONTH),
     "summary": RoutingDecision(MessageIntent.SUMMARY),

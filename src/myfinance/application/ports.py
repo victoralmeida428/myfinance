@@ -9,6 +9,7 @@ from uuid import UUID
 
 from myfinance.application.dto import (
     ParsedMessage,
+    SpendingComparisonMessage,
     SpendingPlanMessage,
     SpendingQuery,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "MessageParser",
     "PluggyItemRepository",
     "ProcessedUpdateRepository",
+    "SpendingComparisonNarrator",
     "SpendingPlanNarrator",
     "SpendingQueryParser",
     "SummaryIntentGate",
@@ -167,6 +169,18 @@ class SpendingPlanNarrator(Protocol):
     """
 
     async def narrate(self, plan: SpendingPlanMessage) -> str | None: ...
+
+
+class SpendingComparisonNarrator(Protocol):
+    """Writes a short narrative around an already computed comparison.
+
+    Implementations only receive the computed ``SpendingComparisonMessage`` and
+    must never change its numbers.
+    """
+
+    async def narrate(
+        self, comparison: SpendingComparisonMessage
+    ) -> str | None: ...
 
 
 class DateResolver(Protocol):

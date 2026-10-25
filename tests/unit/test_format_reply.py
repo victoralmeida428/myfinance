@@ -9,6 +9,7 @@ from myfinance.application.dto import (
     HelpMessage,
     IncomeMessage,
     NeedsClarification,
+    SpendingComparisonMessage,
     SummaryMessage,
 )
 from myfinance.domain.banking import BankAccount
@@ -18,6 +19,7 @@ from myfinance.presentation.telegram.formatting import (
     format_banking,
     format_period_summary,
     format_reply,
+    format_spending_comparison,
 )
 from uuid import uuid4
 
@@ -63,3 +65,21 @@ def test_format_reply_explains_the_income_limitation() -> None:
 
     assert "Ainda não acompanho receitas" in text
     assert "extrato de hoje" in text
+
+
+def test_format_reply_renders_a_spending_comparison() -> None:
+    comparison = SpendingComparisonMessage(
+        label="uber",
+        current_start=date(2026, 10, 1),
+        current_end=date(2026, 10, 24),
+        current_total_cents=63036,
+        current_count=32,
+        previous_start=date(2026, 9, 1),
+        previous_end=date(2026, 9, 30),
+        previous_total_cents=50000,
+        previous_count=25,
+        delta_cents=13036,
+        delta_percent=26,
+    )
+
+    assert format_reply(comparison) == format_spending_comparison(comparison)

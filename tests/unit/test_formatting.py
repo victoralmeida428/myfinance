@@ -9,6 +9,7 @@ from myfinance.application.dto import (
     MerchantSpend,
     RegistrationResult,
     SpendingAnswerMessage,
+    SpendingComparisonMessage,
     SpendingPlanMessage,
 )
 from myfinance.domain.banking import BankExpense
@@ -22,6 +23,7 @@ from myfinance.presentation.telegram.formatting import (
     format_details,
     format_registration,
     format_spending_answer,
+    format_spending_comparison,
     format_spending_plan,
     format_summary,
 )
@@ -242,6 +244,59 @@ def test_format_spending_answer_for_zero_matches() -> None:
     )
 
     assert text == "Nenhum gasto com Uber de 01/10/2026 a 22/10/2026."
+
+
+def make_comparison(
+    *,
+    current_total: int = 63036,
+    previous_total: int = 50000,
+    delta: int = 13036,
+    percent: int | None = 26,
+    narrative: str | None = None,
+) -> SpendingComparisonMessage:
+    return SpendingComparisonMessage(
+        label="uber",
+        current_start=date(2026, 10, 1),
+        current_end=DAY,
+        current_total_cents=current_total,
+        current_count=32,
+        previous_start=date(2026, 9, 1),
+        previous_end=date(2026, 9, 30),
+        previous_total_cents=previous_total,
+        previous_count=25,
+        delta_cents=delta,
+        delta_percent=percent,
+        narrative=narrative,
+    )
+
+
+def test_format_spending_comparison_shows_the_delta() -> None:
+    text = format_spending_comparison(make_comparison())
+
+    assert "Você gastou R$ 630,36 com uber em outubro/2026 (parcial)" in text
+    assert "Em setembro/2026 foram R$ 500,00" in text
+    assert "R$ 130,36 (+26%) a mais" in text
+
+
+def test_format_spending_comparison_handles_zero_previous_month() -> None:
+    text = format_spending_comparison(
+        make_comparison(
+            current_total=3000,
+            previous_total=0,
+            delta=3000,
+            percent=None,
+        )
+    )
+
+    assert "Não houve gasto com uber em setembro/2026." in text
+
+
+def test_format_spending_comparison_uses_the_narrative_when_present() -> None:
+    text = format_spending_comparison(
+        make_comparison(narrative="Narrativa do modelo.")
+    )
+
+    assert text == "Narrativa do modelo."
 
 
 def test_format_spending_answer_for_a_same_day_range() -> None:

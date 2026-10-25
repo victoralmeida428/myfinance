@@ -15,6 +15,7 @@ class MessageIntent(StrEnum):
 
     BANKING = "banking"
     SPENDING_SEARCH = "spending_search"
+    SPENDING_COMPARISON = "spending_comparison"
     SPENDING_PLAN = "spending_plan"
     TOP_MONTH = "top_month"
     SUMMARY = "summary"

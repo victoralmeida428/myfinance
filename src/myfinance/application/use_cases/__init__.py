@@ -11,6 +11,9 @@ from myfinance.application.use_cases.chat import (
     CreateConnectTokenUseCase,
     ExplainFailureUseCase,
 )
+from myfinance.application.use_cases.comparison import (
+    CompareSpendingUseCase,
+)
 from myfinance.application.use_cases.conversation import (
     HandleConversationMessageUseCase,
     HandleMessageUseCase,
@@ -31,6 +34,7 @@ from myfinance.application.use_cases.spending import SearchSpendingUseCase
 
 __all__ = [
     "ChatUseCase",
+    "CompareSpendingUseCase",
     "CreateConnectTokenUseCase",
     "ExplainFailureUseCase",
     "GetDailySummaryUseCase",

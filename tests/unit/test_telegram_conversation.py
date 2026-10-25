@@ -119,6 +119,41 @@ async def test_complete_summary_is_not_rewritten_with_history() -> None:
     assert incoming.calls == ["Resumo da semana"]
 
 
+async def test_comparison_follow_up_is_rewritten_with_context() -> None:
+    incoming = FakeIncoming()
+    memory = FakeMemory(
+        [
+            ChatMessage(role="user", content="quanto foi de uber?"),
+            ChatMessage(
+                role="assistant",
+                content=(
+                    "Você gastou R$ 630,36 com uber de 01/10/2026 a "
+                    "24/10/2026 (32 lançamentos)."
+                ),
+            ),
+        ]
+    )
+    follow_up = HeuristicFollowUp(
+        rewritten=(
+            "quanto gastei com uber neste mês comparado ao mês passado?"
+        )
+    )
+    conversation = TelegramConversation(
+        incoming=incoming,  # type: ignore[arg-type]
+        memory=memory,
+        follow_up=follow_up,  # type: ignore[arg-type]
+    )
+
+    await conversation.respond(
+        "chat", "isso é mais ou menos do que no mês passado?"
+    )
+
+    assert follow_up.calls == ["isso é mais ou menos do que no mês passado?"]
+    assert incoming.calls == [
+        "quanto gastei com uber neste mês comparado ao mês passado?"
+    ]
+
+
 async def test_without_history_the_message_is_not_rewritten() -> None:
     incoming = FakeIncoming()
     follow_up = FakeFollowUp()

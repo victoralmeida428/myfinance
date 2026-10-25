@@ -10,9 +10,11 @@ import pytest
 from myfinance.application.dto import (
     HelpMessage,
     IncomeMessage,
+    NeedsClarification,
     PeriodDetails,
     RegisteredMessage,
     SpendingAnswerMessage,
+    SpendingComparisonMessage,
     SpendingPlanMessage,
     SummaryMessage,
     TopMonthMessage,
@@ -152,6 +154,20 @@ class FakePeriodDetails:
         return self._details
 
 
+class FakeSpendingComparison:
+    def __init__(
+        self, comparison: SpendingComparisonMessage | None
+    ) -> None:
+        self._comparison = comparison
+        self.calls: list[str] = []
+
+    async def execute(
+        self, text: str
+    ) -> SpendingComparisonMessage | None:
+        self.calls.append(text)
+        return self._comparison
+
+
 def build_use_case(
     search: FakeSpendingSearch | None = None,
     repository: InMemoryEntryRepository | None = None,
@@ -161,6 +177,7 @@ def build_use_case(
     search_timeout: float = 45.0,
     plan_timeout: float = 60.0,
     period_details: FakePeriodDetails | None = None,
+    spending_comparison: FakeSpendingComparison | None = None,
 ) -> tuple[HandleMessageUseCase, InMemoryEntryRepository]:
     repository = repository or InMemoryEntryRepository()
     clock = FixedClock(NOW)
@@ -177,6 +194,7 @@ def build_use_case(
         search,
         plan,
         period_details,
+        spending_comparison,
         search_timeout=search_timeout,
         plan_timeout=plan_timeout,
     )
@@ -213,6 +231,42 @@ async def test_period_details_question_is_dispatched() -> None:
 
     assert result is details
     assert fake.calls == [question]
+
+
+async def test_spending_comparison_question_is_dispatched() -> None:
+    comparison = SpendingComparisonMessage(
+        label="uber",
+        current_start=date(2026, 10, 1),
+        current_end=TODAY,
+        current_total_cents=63036,
+        current_count=32,
+        previous_start=date(2026, 9, 1),
+        previous_end=date(2026, 9, 30),
+        previous_total_cents=50000,
+        previous_count=25,
+        delta_cents=13036,
+        delta_percent=26,
+    )
+    fake = FakeSpendingComparison(comparison)
+    use_case, _ = build_use_case(spending_comparison=fake)
+    question = "quanto gastei com uber neste mês comparado ao mês passado?"
+
+    result = await use_case.execute(question)
+
+    assert result is comparison
+    assert fake.calls == [question]
+
+
+async def test_comparison_without_a_subject_asks_for_clarification() -> None:
+    fake = FakeSpendingComparison(None)
+    use_case, _ = build_use_case(spending_comparison=fake)
+
+    result = await use_case.execute(
+        "quanto gastei com 99 neste mês comparado ao mês passado?"
+    )
+
+    assert isinstance(result, NeedsClarification)
+    assert "assunto da comparação" in result.reason
 
 
 async def test_subject_query_with_month_is_answered_by_the_search() -> None:

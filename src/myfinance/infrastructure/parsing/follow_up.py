@@ -6,11 +6,13 @@ recent conversation to make the latest question understandable on its own.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Sequence
 
 from myfinance.application.ports import LanguageModel
 from myfinance.domain.models import ChatMessage
+from myfinance.infrastructure.parsing.amounts import find_amount
 
 __all__ = ["OpenCodeFollowUpResolver", "looks_like_follow_up"]
 
@@ -21,6 +23,11 @@ _SYSTEM_PROMPT = (
     "Reescreva APENAS a mensagem atual como uma pergunta independente, em "
     "português do Brasil, preservando o assunto, o período, o cartão ou a "
     "conta e a intenção que vêm do contexto.\n"
+    "Se a mensagem atual comparar a resposta anterior com outro período "
+    "(por exemplo, \"isso é mais ou menos do que no mês passado?\"), "
+    "reescreva-a como uma pergunta de comparação, preservando o assunto e os "
+    "dois períodos. Exemplo: \"quanto gastei com uber neste mês comparado ao "
+    "mês passado?\".\n"
     "Se a mensagem atual já fizer sentido sozinha ou não for uma continuação, "
     "devolva-a sem alterações.\n"
     "Responda somente com a pergunta reescrita, sem aspas e sem explicações. "
@@ -42,6 +49,20 @@ _FOLLOW_UP_PREFIXES = (
     "e em",
     "e no",
     "e na",
+    "isso ",
+    "esse valor",
+    "esse total",
+    "essa quantia",
+    "comparado",
+    "em comparacao",
+    "em relacao",
+    "mais ou menos",
+    "foi mais",
+    "foi menos",
+    "do que no mes",
+    "do que mes",
+    "vs ",
+    "versus",
 )
 
 _STANDALONE_STARTERS = (
@@ -109,6 +130,20 @@ _STANDALONE_CONTAINS = (
 
 _MAX_FOLLOW_UP_WORDS = 3
 
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_DATE_SPAN_RE = re.compile(
+    r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b"
+)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _has_explicit_amount(text: str) -> bool:
+    """Return whether ``text`` carries a money-like amount outside dates."""
+    masked = _ISO_DATE_RE.sub(" ", text)
+    masked = _DATE_SPAN_RE.sub(" ", masked)
+    masked = _YEAR_RE.sub(" ", masked)
+    return find_amount(masked) is not None
+
 
 def _normalize(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text)
@@ -136,6 +171,8 @@ def looks_like_follow_up(text: str) -> bool:
     if any(marker in normalized for marker in _STANDALONE_CONTAINS):
         return False
     if normalized.startswith(_STANDALONE_STARTERS):
+        return False
+    if _has_explicit_amount(text):
         return False
     if normalized.startswith(_FOLLOW_UP_PREFIXES):
         return True

@@ -51,6 +51,7 @@ def test_help_text_documents_the_data_commands() -> None:
         "extrato de hoje",
         "qual foi o mês que eu mais gastei?",
         "onde posso cortar gastos?",
+        "isso é mais ou menos do que no mês passado?",
         "lançamentos do mês de set/2026",
         "Ainda não acompanho receitas",
     ],

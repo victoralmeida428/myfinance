@@ -26,6 +26,7 @@ Perguntas de gasto:
 "meus gastos com uber"
 "quanto gastei com alimentos?"
 "quanto em posto de gasolina?"
+"isso é mais ou menos do que no mês passado?"
 
 Também respondo:
 "qual meu saldo"

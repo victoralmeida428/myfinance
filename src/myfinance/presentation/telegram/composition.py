@@ -16,6 +16,7 @@ from myfinance.application.ports import (
     SpendingQueryParser,
 )
 from myfinance.application.use_cases import (
+    CompareSpendingUseCase,
     ExplainFailureUseCase,
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
@@ -39,6 +40,9 @@ from myfinance.infrastructure.categorization import (
 )
 from myfinance.infrastructure.clock import SystemClock
 from myfinance.infrastructure.opencode import OpenCodeLanguageModel
+from myfinance.infrastructure.parsing.comparison import (
+    OpenCodeSpendingComparisonNarrator,
+)
 from myfinance.infrastructure.parsing.composite import CompositeMessageParser
 from myfinance.infrastructure.parsing.dates import PortugueseDateResolver
 from myfinance.infrastructure.parsing.deterministic import (
@@ -147,13 +151,23 @@ def build_container(settings: Settings) -> BotContainer:
         resolver,
         PortugueseDateReferenceExtractor(),
     )
+    spending_parser = build_spending_parser(settings, model)
     spending_search = SearchSpendingUseCase(
         entries,
         bank_expenses,
         clock,
         PortugueseDateReferenceExtractor(),
         resolver,
-        build_spending_parser(settings, model),
+        spending_parser,
+    )
+    spending_comparison = CompareSpendingUseCase(
+        spending_search,
+        clock,
+        narrator=(
+            OpenCodeSpendingComparisonNarrator(model)
+            if model is not None
+            else None
+        ),
     )
     spending_plan = GetSpendingPlanUseCase(
         entries,
@@ -180,6 +194,7 @@ def build_container(settings: Settings) -> BotContainer:
         spending_search,
         spending_plan,
         period_details,
+        spending_comparison,
     )
 
     memory = SqliteConversationMemory(database)

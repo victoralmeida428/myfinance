@@ -7,6 +7,7 @@ escaping rules.
 
 from __future__ import annotations
 
+import calendar
 import re
 from collections.abc import Sequence
 from datetime import date
@@ -24,6 +25,7 @@ from myfinance.application.dto import (
     RegisteredMessage,
     RegistrationResult,
     SpendingAnswerMessage,
+    SpendingComparisonMessage,
     SpendingPlanMessage,
     SummaryMessage,
     TopMonthMessage,
@@ -49,6 +51,7 @@ __all__ = [
     "format_registration",
     "format_reply",
     "format_spending_answer",
+    "format_spending_comparison",
     "format_spending_plan",
     "format_summary",
     "format_top_month",
@@ -148,6 +151,8 @@ def format_reply(reply: ChatReply) -> str:
         return format_top_month(reply)
     if isinstance(reply, SpendingAnswerMessage):
         return format_spending_answer(reply)
+    if isinstance(reply, SpendingComparisonMessage):
+        return format_spending_comparison(reply)
     if isinstance(reply, SpendingPlanMessage):
         return format_spending_plan(reply)
     if isinstance(reply, NeedsClarification):
@@ -263,6 +268,76 @@ def format_spending_answer(message: SpendingAnswerMessage) -> str:
     return (
         f"Você gastou {format_brl(message.total_cents)} com "
         f"{message.label} {period} ({message.count} {noun})."
+    )
+
+
+def format_spending_comparison(message: SpendingComparisonMessage) -> str:
+    """Render the current month against the previous one."""
+    if message.narrative:
+        return message.narrative
+
+    label = message.label
+    current_period = _month_label(
+        message.current_start, message.current_end, partial=True
+    )
+    previous_period = _month_label(
+        message.previous_start, message.previous_end
+    )
+
+    if message.current_total_cents == 0 and message.previous_total_cents == 0:
+        return f"Não houve gasto com {label} {current_period} nem {previous_period}."
+
+    if message.previous_total_cents == 0:
+        noun = (
+            "lançamento" if message.current_count == 1 else "lançamentos"
+        )
+        return (
+            f"Você gastou {format_brl(message.current_total_cents)} com "
+            f"{label} {current_period} ({message.current_count} {noun}). "
+            f"Não houve gasto com {label} {previous_period}."
+        )
+
+    if message.current_total_cents == 0:
+        noun = (
+            "lançamento" if message.previous_count == 1 else "lançamentos"
+        )
+        return (
+            f"Não houve gasto com {label} {current_period}. "
+            f"{previous_period.capitalize()} foram "
+            f"{format_brl(message.previous_total_cents)} "
+            f"({message.previous_count} {noun})."
+        )
+
+    current_noun = (
+        "lançamento" if message.current_count == 1 else "lançamentos"
+    )
+    previous_noun = (
+        "lançamento" if message.previous_count == 1 else "lançamentos"
+    )
+    direction = "a mais" if message.delta_cents > 0 else "a menos"
+    percent = (
+        f" ({_format_delta(message.delta_percent)})"
+        if message.delta_percent is not None
+        else ""
+    )
+    return (
+        f"Você gastou {format_brl(message.current_total_cents)} com {label} "
+        f"{current_period} ({message.current_count} {current_noun}). "
+        f"{previous_period.capitalize()} foram "
+        f"{format_brl(message.previous_total_cents)} "
+        f"({message.previous_count} {previous_noun}). "
+        f"Isso é {format_brl(abs(message.delta_cents))}{percent} {direction}."
+    )
+
+
+def _month_label(start: date, end: date, *, partial: bool = False) -> str:
+    name = _MONTH_NAMES[start.month - 1]
+    last_day = calendar.monthrange(start.year, start.month)[1]
+    suffix = " (parcial)" if partial and end.day < last_day else ""
+    if start.year == end.year and start.month == end.month:
+        return f"em {name}/{start.year}{suffix}"
+    return (
+        f"de {format_date(start)} a {format_date(end)}{suffix}"
     )
 
 
