@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 
 from telegram import Update
 from telegram.ext import (
@@ -133,8 +134,12 @@ def _require_owner(settings: Settings) -> int:
 async def _log_error(
     update: object, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Log only the exception class, so message text and tokens stay private."""
+    """Log the exception class and frame locations, never message text."""
     error = context.error
     if error is None:
         return
     _LOGGER.error("Telegram update failed with %s", type(error).__name__)
+    for frame in traceback.extract_tb(error.__traceback__)[-4:]:
+        _LOGGER.error(
+            "  at %s:%s in %s", frame.filename, frame.lineno, frame.name
+        )
