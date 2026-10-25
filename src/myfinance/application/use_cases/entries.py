@@ -8,6 +8,8 @@ from uuid import uuid4
 from myfinance.application.dto import (
     DayDetails,
     ParsedMessage,
+    PeriodDetails,
+    PeriodItem,
     RegistrationResult,
 )
 from myfinance.application.errors import InvalidDateReference
@@ -15,10 +17,12 @@ from myfinance.application.periods import resolve_period
 from myfinance.application.ports import (
     BankExpenseProvider,
     Clock,
+    DateReferenceExtractor,
     DateResolver,
     EntryRepository,
 )
 from myfinance.domain.entries import Entry
+from myfinance.domain.expenses import manual_expenses_not_in_bank
 from myfinance.domain.summary import (
     DailySummary,
     PeriodSummary,
@@ -29,6 +33,7 @@ from myfinance.domain.summary import (
 __all__ = [
     "GetDailySummaryUseCase",
     "GetDayDetailsUseCase",
+    "GetPeriodDetailsUseCase",
     "GetPeriodSummaryUseCase",
     "GetSummaryUseCase",
     "RegisterEntryUseCase",
@@ -162,3 +167,64 @@ class GetDayDetailsUseCase:
             raise InvalidDateReference("Não entendi a data informada.")
         entries = await self._repository.list_by_day(day)
         return DayDetails(day=day, entries=entries)
+
+
+class GetPeriodDetailsUseCase:
+    """List the realized entries of a period, with bank spending included."""
+
+    def __init__(
+        self,
+        repository: EntryRepository,
+        bank_expenses: BankExpenseProvider | None,
+        clock: Clock,
+        references: DateReferenceExtractor,
+        dates: DateResolver,
+    ) -> None:
+        self._repository = repository
+        self._bank_expenses = bank_expenses
+        self._clock = clock
+        self._references = references
+        self._dates = dates
+
+    async def execute(self, reference: str | None = None) -> PeriodDetails:
+        start, end = self._resolve_period(reference)
+        entries = await self._repository.list_between(start, end)
+        bank_expenses = ()
+        if self._bank_expenses is not None:
+            bank_expenses = await self._bank_expenses.expenses(start, end)
+
+        items = [
+            PeriodItem(
+                day=entry.day,
+                description=entry.description,
+                category=entry.category,
+                amount_cents=entry.amount.cents,
+                from_bank=False,
+            )
+            for entry in manual_expenses_not_in_bank(entries, bank_expenses)
+        ]
+        items.extend(
+            PeriodItem(
+                day=expense.day,
+                description=expense.description,
+                category=expense.category,
+                amount_cents=expense.amount_cents,
+                from_bank=True,
+            )
+            for expense in bank_expenses
+        )
+        items.sort(key=lambda item: (item.day, item.description))
+        return PeriodDetails(start=start, end=end, items=tuple(items))
+
+    def _resolve_period(self, reference: str | None) -> tuple[date, date]:
+        today = self._clock.today()
+        if reference:
+            period = resolve_period(reference, today=today)
+            if period is not None:
+                return period
+            extracted = self._references.extract(reference)
+            if extracted is not None:
+                day = self._dates.resolve(extracted, today=today)
+                if day is not None:
+                    return day, day
+        return today.replace(day=1), today

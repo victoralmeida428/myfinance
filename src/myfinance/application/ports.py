@@ -40,6 +40,7 @@ __all__ = [
     "IntentRouter",
     "LanguageModel",
     "LLMGate",
+    "MessageIntentClassifier",
     "MessageIntentRouter",
     "MessageParser",
     "PluggyItemRepository",
@@ -144,6 +145,12 @@ class MessageIntentRouter(Protocol):
     """Chooses the intent of a free-form message before dispatching it."""
 
     async def route(self, text: str) -> RoutingDecision: ...
+
+
+class MessageIntentClassifier(Protocol):
+    """Classifies a message, or abstains when the provider is unavailable."""
+
+    async def classify(self, text: str) -> RoutingDecision | None: ...
 
 
 class SpendingQueryParser(Protocol):

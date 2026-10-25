@@ -43,7 +43,71 @@ _FOLLOW_UP_PREFIXES = (
     "e no",
     "e na",
 )
-_MAX_FOLLOW_UP_WORDS = 6
+
+_STANDALONE_STARTERS = (
+    "resumo",
+    "resume",
+    "balanco",
+    "saldo",
+    "extrato",
+    "transacao",
+    "transacoes",
+    "conta",
+    "cartao",
+    "fatura",
+    "ajuda",
+    "help",
+    "comando",
+    "comandos",
+    "quanto",
+    "qual",
+    "quais",
+    "onde",
+    "como",
+    "detalhes",
+    "dados",
+    "titular",
+    "cpf",
+    "plano",
+    "planejamento",
+    "gastei",
+    "gastos",
+    "gasto",
+    "me ajuda",
+    "me mostra",
+    "pode me ajudar",
+    "quero",
+)
+
+_STANDALONE_CONTAINS = (
+    "resumo",
+    "resume",
+    "balanco",
+    "saldo",
+    "extrato",
+    "transacao",
+    "transacoes",
+    "ajuda",
+    "help",
+    "comando",
+    "comandos",
+    "plano",
+    "planejamento",
+    "detalhes",
+    "dados",
+    "titular",
+    "cpf",
+    "gastos",
+    "gasto",
+    "gastei",
+    "fatura",
+    "funcionalidades",
+    "funcoes",
+    "cortar",
+    "economizar",
+)
+
+_MAX_FOLLOW_UP_WORDS = 3
 
 
 def _normalize(text: str) -> str:
@@ -57,13 +121,27 @@ def _normalize(text: str) -> str:
 
 
 def looks_like_follow_up(text: str) -> bool:
-    """Return whether ``text`` is short or elliptical enough to need context."""
+    """Return whether ``text`` is elliptical enough to need conversation context.
+
+    Complete requests such as "Resumo da semana" or "qual meu saldo" must not
+    be rewritten: doing so can change their intent based on the previous
+    message. Only short fragments that do not carry a standalone intent marker
+    are considered.
+    """
     normalized = _normalize(text)
     if not normalized:
         return False
-    if len(normalized.split()) <= _MAX_FOLLOW_UP_WORDS:
+
+    words = normalized.split()
+    if any(marker in normalized for marker in _STANDALONE_CONTAINS):
+        return False
+    if normalized.startswith(_STANDALONE_STARTERS):
+        return False
+    if normalized.startswith(_FOLLOW_UP_PREFIXES):
         return True
-    return normalized.startswith(_FOLLOW_UP_PREFIXES)
+    if all(word.isdigit() for word in words):
+        return False
+    return len(words) <= _MAX_FOLLOW_UP_WORDS
 
 
 class OpenCodeFollowUpResolver:

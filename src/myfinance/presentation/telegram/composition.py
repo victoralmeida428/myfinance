@@ -19,6 +19,7 @@ from myfinance.application.use_cases import (
     ExplainFailureUseCase,
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
+    GetPeriodDetailsUseCase,
     GetPeriodSummaryUseCase,
     GetSpendingPlanUseCase,
     GetSummaryUseCase,
@@ -56,7 +57,6 @@ from myfinance.infrastructure.parsing.spending_query import (
     DeterministicSpendingQueryParser,
     OpenCodeSpendingQueryParser,
 )
-from myfinance.infrastructure.parsing.summary_gate import JevSummaryIntentGate
 from myfinance.infrastructure.pluggy_bank_expenses import (
     PluggyBankExpenseProvider,
 )
@@ -65,6 +65,7 @@ from myfinance.infrastructure.routing import (
     CompositeIntentRouter,
     CompositeMessageIntentRouter,
     JevIntentRouter,
+    JevMessageIntentRouter,
     KeywordIntentRouter,
 )
 from myfinance.infrastructure.sqlite import (
@@ -115,8 +116,8 @@ def build_container(settings: Settings) -> BotContainer:
     )
 
     register = RegisterEntryUseCase(entries, clock)
-    summary_gate = (
-        JevSummaryIntentGate(settings)
+    classifier = (
+        JevMessageIntentRouter(settings)
         if _has_categorizer_token(settings)
         else None
     )
@@ -133,7 +134,7 @@ def build_container(settings: Settings) -> BotContainer:
     jev_intent = JevIntentRouter(settings) if _has_categorizer_token(settings) else None
     banking_router = CompositeIntentRouter(keyword_intent, jev_intent)
     message_router = CompositeMessageIntentRouter(
-        keyword_intent, jev_intent, summary_gate
+        keyword_intent, jev_intent, classifier=classifier
     )
 
     register_item = RegisterPluggyItemUseCase(items, clock)
@@ -160,6 +161,13 @@ def build_container(settings: Settings) -> BotContainer:
         clock,
         OpenCodeSpendingPlanNarrator(model) if model is not None else None,
     )
+    period_details = GetPeriodDetailsUseCase(
+        entries,
+        bank_expenses,
+        clock,
+        PortugueseDateReferenceExtractor(),
+        resolver,
+    )
     messages = HandleMessageUseCase(
         message_router,
         parser,
@@ -171,6 +179,7 @@ def build_container(settings: Settings) -> BotContainer:
         top_month,
         spending_search,
         spending_plan,
+        period_details,
     )
 
     memory = SqliteConversationMemory(database)

@@ -23,11 +23,14 @@ __all__ = [
     "HandleMessageResult",
     "HelpMessage",
     "IdentityAnswer",
+    "IncomeMessage",
     "MerchantSpend",
     "MonthlyExpense",
     "NeedsClarification",
     "NoPluggyItem",
     "ParsedMessage",
+    "PeriodDetails",
+    "PeriodItem",
     "RegisteredMessage",
     "RegistrationResult",
     "SpendingAnswerMessage",
@@ -75,6 +78,26 @@ class DayDetails:
 
 
 @dataclass(frozen=True, slots=True)
+class PeriodItem:
+    """One realized entry or bank expense inside a period."""
+
+    day: date
+    description: str
+    category: Category
+    amount_cents: int
+    from_bank: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PeriodDetails:
+    """Every realized entry inside an inclusive period."""
+
+    start: date
+    end: date
+    items: tuple[PeriodItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SummaryMessage:
     """A message that asked for a daily or period summary instead of a registration."""
 
@@ -91,6 +114,11 @@ class NeedsClarification:
 @dataclass(frozen=True, slots=True)
 class HelpMessage:
     """A request for the bot's capabilities and command reference."""
+
+
+@dataclass(frozen=True, slots=True)
+class IncomeMessage:
+    """An income question, which the bot does not track yet."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +215,8 @@ HandleMessageResult: TypeAlias = (
     | SpendingPlanMessage
     | NeedsClarification
     | HelpMessage
+    | IncomeMessage
+    | PeriodDetails
 )
 
 

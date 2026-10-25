@@ -9,6 +9,8 @@ import pytest
 
 from myfinance.application.dto import (
     HelpMessage,
+    IncomeMessage,
+    PeriodDetails,
     RegisteredMessage,
     SpendingAnswerMessage,
     SpendingPlanMessage,
@@ -140,6 +142,16 @@ class FakeSpendingPlan:
         return self._plan
 
 
+class FakePeriodDetails:
+    def __init__(self, details: PeriodDetails) -> None:
+        self._details = details
+        self.calls: list[str] = []
+
+    async def execute(self, text: str = "") -> PeriodDetails:
+        self.calls.append(text)
+        return self._details
+
+
 def build_use_case(
     search: FakeSpendingSearch | None = None,
     repository: InMemoryEntryRepository | None = None,
@@ -148,6 +160,7 @@ def build_use_case(
     *,
     search_timeout: float = 45.0,
     plan_timeout: float = 60.0,
+    period_details: FakePeriodDetails | None = None,
 ) -> tuple[HandleMessageUseCase, InMemoryEntryRepository]:
     repository = repository or InMemoryEntryRepository()
     clock = FixedClock(NOW)
@@ -163,6 +176,7 @@ def build_use_case(
         GetTopSpendingMonthUseCase(repository, FakeBankExpenses(), clock),
         search,
         plan,
+        period_details,
         search_timeout=search_timeout,
         plan_timeout=plan_timeout,
     )
@@ -175,6 +189,30 @@ async def test_capability_question_returns_the_help_message() -> None:
     result = await use_case.execute("O que você pode fazer?")
 
     assert isinstance(result, HelpMessage)
+
+
+async def test_income_question_returns_the_income_message() -> None:
+    use_case, _ = build_use_case()
+
+    result = await use_case.execute("Quanto eu recebi esse mês?")
+
+    assert isinstance(result, IncomeMessage)
+
+
+async def test_period_details_question_is_dispatched() -> None:
+    details = PeriodDetails(
+        start=date(2026, 9, 1),
+        end=date(2026, 9, 30),
+        items=(),
+    )
+    fake = FakePeriodDetails(details)
+    use_case, _ = build_use_case(period_details=fake)
+    question = "quero os lançamentos do mês de set/2026"
+
+    result = await use_case.execute(question)
+
+    assert result is details
+    assert fake.calls == [question]
 
 
 async def test_subject_query_with_month_is_answered_by_the_search() -> None:

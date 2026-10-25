@@ -61,6 +61,18 @@ _MONTH_NAMES: dict[str, int] = {
     "outubro": 10,
     "novembro": 11,
     "dezembro": 12,
+    "jan": 1,
+    "fev": 2,
+    "mar": 3,
+    "abr": 4,
+    "mai": 5,
+    "jun": 6,
+    "jul": 7,
+    "ago": 8,
+    "set": 9,
+    "out": 10,
+    "nov": 11,
+    "dez": 12,
 }
 _MONTH_NAME_PATTERN = re.compile(
     r"\b(" + "|".join(_MONTH_NAMES) + r")\b"
@@ -162,6 +174,13 @@ def resolve_period(
     if _contains_any(normalized, _NEXT_MONTH_MARKERS):
         return _next_month_range(today)
 
+    # A named month wins over the generic "do mes"/"no mes" markers, so
+    # "lancamentos do mes de set/2026" resolves to September 2026 instead of
+    # the current month.
+    month_range = _month_name_range(normalized, today=today)
+    if month_range is not None:
+        return month_range
+
     if _contains_any(normalized, _CURRENT_MONTH_MARKERS):
         return today.replace(day=1), today
 
@@ -183,10 +202,9 @@ def resolve_period(
     if _contains_any(normalized, _LAST_THIRTY_DAYS_MARKERS):
         return today - timedelta(days=29), today
 
-    # Year expressions are checked before the month-name logic so that a
-    # month with an explicit year ("outubro de 2025") still resolves to that
-    # month. The bare-year fallback comes after the month-name logic and only
-    # accepts a standalone 1900-2099 year, never one embedded in a date.
+    # The bare-year fallback only accepts a standalone 1900-2099 year, never
+    # one embedded in a date; a month with an explicit year was resolved
+    # earlier by ``_month_name_range``.
     if _contains_any(normalized, _LAST_YEAR_MARKERS):
         return _full_year_range(today.year - 1)
 
@@ -195,10 +213,6 @@ def resolve_period(
 
     if _contains_any(normalized, _CURRENT_YEAR_MARKERS):
         return today.replace(month=1, day=1), today
-
-    month_range = _month_name_range(normalized, today=today)
-    if month_range is not None:
-        return month_range
 
     bare_year = _BARE_YEAR_PATTERN.search(normalized)
     if bare_year is not None:

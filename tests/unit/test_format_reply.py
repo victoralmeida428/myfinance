@@ -7,6 +7,7 @@ from datetime import date
 from myfinance.application.dto import (
     AccountsAnswer,
     HelpMessage,
+    IncomeMessage,
     NeedsClarification,
     SummaryMessage,
 )
@@ -55,3 +56,10 @@ def test_format_reply_renders_a_clarification() -> None:
 
 def test_format_reply_renders_the_help_text() -> None:
     assert format_reply(HelpMessage()) == HELP_TEXT
+
+
+def test_format_reply_explains_the_income_limitation() -> None:
+    text = format_reply(IncomeMessage())
+
+    assert "Ainda não acompanho receitas" in text
+    assert "extrato de hoje" in text

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from myfinance.infrastructure.routing.composite import CompositeIntentRouter
 from myfinance.infrastructure.routing.jev import JevIntentRouter
+from myfinance.infrastructure.routing.jev_messages import JevMessageIntentRouter
 from myfinance.infrastructure.routing.keywords import KeywordIntentRouter
 from myfinance.infrastructure.routing.messages import (
     CompositeMessageIntentRouter,
@@ -15,5 +16,6 @@ __all__ = [
     "CompositeMessageIntentRouter",
     "DeterministicMessageIntentRouter",
     "JevIntentRouter",
+    "JevMessageIntentRouter",
     "KeywordIntentRouter",
 ]

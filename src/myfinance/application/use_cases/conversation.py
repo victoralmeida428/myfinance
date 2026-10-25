@@ -6,7 +6,9 @@ from myfinance.application.dto import (
     ChatReply,
     HandleMessageResult,
     HelpMessage,
+    IncomeMessage,
     NeedsClarification,
+    PeriodDetails,
     RegisteredMessage,
     SummaryMessage,
 )
@@ -21,6 +23,7 @@ from myfinance.application.use_cases.banking import HandleBankingQueryUseCase
 from myfinance.application.use_cases.common import run_with_timeout
 from myfinance.application.use_cases.entries import (
     GetDailySummaryUseCase,
+    GetPeriodDetailsUseCase,
     GetPeriodSummaryUseCase,
     RegisterEntryUseCase,
 )
@@ -52,6 +55,7 @@ class HandleMessageUseCase:
         top_month: GetTopSpendingMonthUseCase | None = None,
         spending_search: SearchSpendingUseCase | None = None,
         spending_plan: GetSpendingPlanUseCase | None = None,
+        period_details: GetPeriodDetailsUseCase | None = None,
         *,
         search_timeout: float = _SPENDING_SEARCH_TIMEOUT_SECONDS,
         plan_timeout: float = _SPENDING_PLAN_TIMEOUT_SECONDS,
@@ -67,6 +71,7 @@ class HandleMessageUseCase:
         self._top_month = top_month
         self._spending_search = spending_search
         self._spending_plan = spending_plan
+        self._period_details = period_details
         self._search_timeout = search_timeout
         self._plan_timeout = plan_timeout
         self._top_month_timeout = top_month_timeout
@@ -79,6 +84,12 @@ class HandleMessageUseCase:
 
         if intent is MessageIntent.HELP:
             return HelpMessage()
+
+        if intent is MessageIntent.INCOME:
+            return IncomeMessage()
+
+        if intent is MessageIntent.PERIOD_DETAILS and self._period_details:
+            return await self._period_details.execute(text)
 
         if intent is MessageIntent.SPENDING_SEARCH and self._spending_search:
             answer = await run_with_timeout(
@@ -108,6 +119,7 @@ class HandleMessageUseCase:
             MessageIntent.SPENDING_PLAN,
             MessageIntent.TOP_MONTH,
             MessageIntent.SUMMARY,
+            MessageIntent.PERIOD_DETAILS,
         }:
             return await self._summary_result(text)
 

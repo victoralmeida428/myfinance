@@ -32,6 +32,22 @@ def test_month_name_with_slash_year_is_a_full_month() -> None:
     )
 
 
+def test_abbreviated_month_with_slash_year_is_a_full_month() -> None:
+    assert resolve_period("set/2026", today=TODAY) == (
+        date(2026, 9, 1),
+        date(2026, 9, 30),
+    )
+
+
+def test_named_month_wins_over_the_generic_do_mes_marker() -> None:
+    assert resolve_period(
+        "lançamentos do mês de set/2026", today=TODAY
+    ) == (
+        date(2026, 9, 1),
+        date(2026, 9, 30),
+    )
+
+
 def test_future_month_name_uses_the_previous_year() -> None:
     assert resolve_period("em dezembro", today=TODAY) == (
         date(2025, 12, 1),

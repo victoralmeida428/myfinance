@@ -18,6 +18,7 @@ from myfinance.application.use_cases.conversation import (
 from myfinance.application.use_cases.entries import (
     GetDailySummaryUseCase,
     GetDayDetailsUseCase,
+    GetPeriodDetailsUseCase,
     GetPeriodSummaryUseCase,
     GetSummaryUseCase,
     RegisterEntryUseCase,
@@ -34,6 +35,7 @@ __all__ = [
     "ExplainFailureUseCase",
     "GetDailySummaryUseCase",
     "GetDayDetailsUseCase",
+    "GetPeriodDetailsUseCase",
     "GetPeriodSummaryUseCase",
     "GetSpendingPlanUseCase",
     "GetSummaryUseCase",

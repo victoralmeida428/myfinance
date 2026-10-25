@@ -138,6 +138,14 @@ async def test_llm_returns_none_for_malformed_output(reply: str) -> None:
     assert await parser.parse(UBER_TEXT, today=TODAY) is None
 
 
+async def test_llm_rejects_a_query_without_category_or_keywords() -> None:
+    parser = OpenCodeSpendingQueryParser(
+        FakeLanguageModel(query_body(period_reference="essa semana"))
+    )
+
+    assert await parser.parse("resumo da semana", today=TODAY) is None
+
+
 async def test_llm_provider_error_propagates() -> None:
     parser = OpenCodeSpendingQueryParser(
         FakeLanguageModel(error=ProviderError("provider down"))

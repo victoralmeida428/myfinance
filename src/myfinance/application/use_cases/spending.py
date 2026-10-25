@@ -51,6 +51,10 @@ class SearchSpendingUseCase:
         query = await self._parser.parse(text, today=today)
         if query is None:
             return None
+        if query.category is None and not any(
+            keyword.strip() for keyword in query.keywords
+        ):
+            return None
 
         start, end = self._resolve_period(
             query.period_reference or text, text, today

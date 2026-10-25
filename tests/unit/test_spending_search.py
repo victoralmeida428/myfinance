@@ -469,6 +469,16 @@ async def test_parser_returning_none_yields_no_answer() -> None:
     assert answer is None
 
 
+async def test_query_without_category_or_keywords_yields_no_answer() -> None:
+    use_case = build_use_case(
+        FakeSpendingParser(SpendingQuery("outubro", None, ()))
+    )
+
+    answer = await use_case.execute("resumo da semana")
+
+    assert answer is None
+
+
 async def test_bank_provider_error_propagates() -> None:
     bank = RaisingBankExpenses()
     use_case = build_use_case(

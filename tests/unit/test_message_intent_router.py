@@ -92,6 +92,30 @@ async def test_account_questions_with_pronouns_route_to_accounts(
 @pytest.mark.parametrize(
     "text",
     [
+        "Quanto eu recebi esse mês?",
+        "quanto ganhei esse mês",
+        "quanto entrou na conta",
+        "meu salário",
+        "recebi 100",
+    ],
+)
+async def test_income_questions_route_to_income(text: str) -> None:
+    decision = await build_router().route(text)
+
+    assert decision.intent is MessageIntent.INCOME
+
+
+async def test_period_details_question_routes_to_details() -> None:
+    decision = await build_router().route(
+        "quero os lançamentos do mês de set/2026"
+    )
+
+    assert decision.intent is MessageIntent.PERIOD_DETAILS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "meus gastos com uber",
         "gastos de uber",
         "gastos com alimentação",

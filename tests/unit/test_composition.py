@@ -71,6 +71,21 @@ def test_build_follow_up_resolver_requires_both_key_and_model(
     assert build_follow_up_resolver(with_key, None) is None
 
 
+def test_build_container_wires_the_jev_classifier(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        pluggy_client_id=uuid4(),
+        pluggy_client_secret="secret",
+        telegram_owner_id=1,
+        database_path=tmp_path / "test.db",
+        categorizer_api_token="test-token",
+    )
+
+    container = build_container(settings)
+
+    assert isinstance(container.conversation, TelegramConversation)
+
+
 def test_build_container_exposes_only_the_handler_entry_points(
     tmp_path: Path,
 ) -> None:

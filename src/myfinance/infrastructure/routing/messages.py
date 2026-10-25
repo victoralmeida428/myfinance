@@ -1,9 +1,9 @@
-"""Deterministic intent routing for free-form pt-BR messages.
+"""Deterministic fallback intent routing for free-form pt-BR messages.
 
-The router composes the existing banking keyword router, the optional Jev
-classifiers and the pt-BR heuristics that used to live in the application
-layer. It returns one :class:`RoutingDecision`; callers never need to know
-which classifier won.
+The JEV classifier is the primary router (see ``jev_messages``); this module
+keeps the local heuristics used when it is unavailable or abstains. The
+composite also keeps cheap fast paths for help, income and strong banking
+phrases.
 """
 
 from __future__ import annotations
@@ -12,13 +12,30 @@ import re
 
 from myfinance.application.errors import ProviderError
 from myfinance.application.intents import MessageIntent, RoutingDecision
-from myfinance.application.ports import IntentRouter, SummaryIntentGate
+from myfinance.application.ports import (
+    IntentRouter,
+    MessageIntentClassifier,
+    SummaryIntentGate,
+)
 from myfinance.domain.banking import BankingIntent
 from myfinance.infrastructure.parsing.amounts import find_amount
 from myfinance.infrastructure.parsing.dates import normalize
 from myfinance.infrastructure.routing.keywords import KeywordIntentRouter
 
 __all__ = ["DeterministicMessageIntentRouter", "CompositeMessageIntentRouter"]
+
+_INCOME_PATTERNS = (
+    r"\bquanto\b.*\b(recebi|recebo|recebe|recebeu|receber|recebido|"
+    r"receitas?|ganhei|ganho|ganhou|ganhar|entrou|entraram|entrando|caiu)\b",
+    r"\b(?:recebi|recebo|recebeu|ganhei|ganhou)\b",
+    r"^\s*(?:entrou|entraram|caiu)\b",
+    r"\bsalarios?\b",
+)
+
+_DETAIL_PATTERNS = (
+    r"\blancamentos?\b",
+    r"\blista\s+(?:de\s+|dos\s+|das\s+)?(?:lancamentos?|gastos)\b",
+)
 
 _HELP_PATTERNS = (
     r"\bo que\s+(?:voce|vc|tu)\s+(?:pode|consegue|sabe)\s+fazer\b",
@@ -126,6 +143,24 @@ _SPENDING_QUERY_STOPWORDS = frozenset(
         "como",
         "estao",
         "quero",
+        "recebi",
+        "recebo",
+        "recebe",
+        "recebeu",
+        "receber",
+        "recebido",
+        "receita",
+        "receitas",
+        "ganhei",
+        "ganho",
+        "ganhou",
+        "ganhar",
+        "salario",
+        "salarios",
+        "entrou",
+        "entraram",
+        "entrando",
+        "caiu",
         "resumo",
         "resume",
         "balanco",
@@ -243,6 +278,16 @@ _DATE_SPAN_RE = re.compile(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b")
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 
+def _asks_for_income(text: str) -> bool:
+    normalized = normalize(text)
+    return any(re.search(pattern, normalized) for pattern in _INCOME_PATTERNS)
+
+
+def _asks_for_period_details(text: str) -> bool:
+    normalized = normalize(text)
+    return any(re.search(pattern, normalized) for pattern in _DETAIL_PATTERNS)
+
+
 def _asks_for_help(text: str) -> bool:
     normalized = normalize(text)
     return any(re.search(pattern, normalized) for pattern in _HELP_PATTERNS)
@@ -313,6 +358,10 @@ class DeterministicMessageIntentRouter:
     async def route(self, text: str) -> RoutingDecision:
         if _asks_for_help(text):
             return RoutingDecision(MessageIntent.HELP)
+        if _asks_for_income(text):
+            return RoutingDecision(MessageIntent.INCOME)
+        if _asks_for_period_details(text):
+            return RoutingDecision(MessageIntent.PERIOD_DETAILS)
         if _looks_like_spending_query(text):
             return RoutingDecision(MessageIntent.SPENDING_SEARCH)
         if _asks_for_spending_plan(text):
@@ -336,22 +385,36 @@ class DeterministicMessageIntentRouter:
 
 
 class CompositeMessageIntentRouter:
-    """Routes banking, spending and summaries with cheap checks first."""
+    """Prefers JEV, keeping cheap deterministic fast paths and a fallback."""
 
     def __init__(
         self,
         keywords: KeywordIntentRouter | None = None,
         jev: IntentRouter | None = None,
         summary_gate: SummaryIntentGate | None = None,
+        classifier: MessageIntentClassifier | None = None,
     ) -> None:
         self._keywords = keywords or KeywordIntentRouter()
         self._jev = jev
         self._finance = DeterministicMessageIntentRouter(summary_gate)
+        self._classifier = classifier
 
     async def route(self, text: str) -> RoutingDecision:
         banking = await self._keywords.route(text)
         if banking is not None and banking is not BankingIntent.NONE:
             return RoutingDecision(MessageIntent.BANKING, banking)
+
+        # These two are cheap and must work even when the classifier is
+        # unavailable; everything else prefers the JEV classifier.
+        if _asks_for_help(text):
+            return RoutingDecision(MessageIntent.HELP)
+        if _asks_for_income(text):
+            return RoutingDecision(MessageIntent.INCOME)
+
+        if self._classifier is not None:
+            decision = await self._classifier.classify(text)
+            if decision is not None:
+                return decision
 
         decision = await self._finance.route(text)
         if decision.intent is not MessageIntent.REGISTER:

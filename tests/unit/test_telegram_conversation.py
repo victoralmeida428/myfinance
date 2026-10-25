@@ -7,6 +7,7 @@ from datetime import date
 from myfinance.application.dto import NeedsClarification, SpendingAnswerMessage
 from myfinance.application.errors import ProviderError
 from myfinance.domain.models import ChatMessage
+from myfinance.infrastructure.parsing.follow_up import looks_like_follow_up
 from myfinance.presentation.telegram.conversation import TelegramConversation
 
 
@@ -59,6 +60,11 @@ class FakeFollowUp:
         return self._rewritten
 
 
+class HeuristicFollowUp(FakeFollowUp):
+    def should_rewrite(self, text: str) -> bool:
+        return looks_like_follow_up(text)
+
+
 class FakeExplainer:
     def __init__(self, reply: str = "O banco não respondeu.") -> None:
         self.reply = reply
@@ -90,6 +96,27 @@ async def test_short_message_with_history_is_rewritten_and_remembered() -> None:
         ("chat", "user", "e no cartão?"),
         ("chat", "assistant", "preciso de mais contexto"),
     ]
+
+
+async def test_complete_summary_is_not_rewritten_with_history() -> None:
+    incoming = FakeIncoming()
+    memory = FakeMemory(
+        [
+            ChatMessage(role="user", content="Quanto gastei com uber?"),
+            ChatMessage(role="assistant", content="Você gastou R$ 10,00."),
+        ]
+    )
+    follow_up = HeuristicFollowUp()
+    conversation = TelegramConversation(
+        incoming=incoming,  # type: ignore[arg-type]
+        memory=memory,
+        follow_up=follow_up,  # type: ignore[arg-type]
+    )
+
+    await conversation.respond("chat", "Resumo da semana")
+
+    assert follow_up.calls == []
+    assert incoming.calls == ["Resumo da semana"]
 
 
 async def test_without_history_the_message_is_not_rewritten() -> None:

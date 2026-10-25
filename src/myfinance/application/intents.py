@@ -20,6 +20,8 @@ class MessageIntent(StrEnum):
     SUMMARY = "summary"
     REGISTER = "register"
     HELP = "help"
+    INCOME = "income"
+    PERIOD_DETAILS = "period_details"
 
 
 @dataclass(frozen=True, slots=True)

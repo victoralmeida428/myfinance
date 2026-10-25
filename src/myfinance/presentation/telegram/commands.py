@@ -32,6 +32,9 @@ Também respondo:
 "extrato de hoje"
 "qual foi o mês que eu mais gastei?"
 "onde posso cortar gastos?"
+"lançamentos do mês de set/2026"
+
+Ainda não acompanho receitas; para o que entrou na conta, peça "extrato de hoje".
 
 Categorias: Alimentação, Transporte, Lazer, Saúde, Serviços, Outros."""
 

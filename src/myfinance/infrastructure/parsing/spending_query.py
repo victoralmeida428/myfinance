@@ -99,6 +99,24 @@ _STOPWORDS = frozenset(
         "como",
         "estao",
         "quero",
+        "recebi",
+        "recebo",
+        "recebe",
+        "recebeu",
+        "receber",
+        "recebido",
+        "receita",
+        "receitas",
+        "ganhei",
+        "ganho",
+        "ganhou",
+        "ganhar",
+        "salario",
+        "salarios",
+        "entrou",
+        "entraram",
+        "entrando",
+        "caiu",
         "resumo",
         "resume",
         "balanco",
@@ -199,6 +217,9 @@ class OpenCodeSpendingQueryParser:
             KeyError,
             TypeError,
         ):
+            return None
+
+        if category is None and not keywords:
             return None
 
         return SpendingQuery(

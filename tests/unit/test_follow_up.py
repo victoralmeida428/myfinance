@@ -39,13 +39,31 @@ def test_should_rewrite_accepts_short_or_elliptical_messages() -> None:
     resolver = OpenCodeFollowUpResolver(FakeLanguageModel())
 
     assert resolver.should_rewrite("e no cartão?") is True
+    assert resolver.should_rewrite("no cartão?") is True
+    assert resolver.should_rewrite("nesse mês?") is True
     assert resolver.should_rewrite("agora") is True
-    assert (
-        resolver.should_rewrite(
-            "quanto eu gastei com transporte na semana passada inteira?"
-        )
-        is False
-    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Resumo da semana",
+        "qual meu saldo",
+        "meu saldo",
+        "me ajuda",
+        "O que você pode fazer?",
+        "gastei 45",
+        "extrato de hoje",
+        "meus gastos com uber",
+        "onde posso cortar gastos?",
+        "45",
+        "quanto eu gastei com transporte na semana passada inteira?",
+    ],
+)
+def test_should_not_rewrite_complete_requests(text: str) -> None:
+    resolver = OpenCodeFollowUpResolver(FakeLanguageModel())
+
+    assert resolver.should_rewrite(text) is False
 
 
 async def test_rewrite_returns_the_model_answer() -> None:

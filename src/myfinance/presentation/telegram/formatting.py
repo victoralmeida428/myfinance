@@ -17,8 +17,10 @@ from myfinance.application.dto import (
     ChatReply,
     HelpMessage,
     IdentityAnswer,
+    IncomeMessage,
     NeedsClarification,
     NoPluggyItem,
+    PeriodDetails,
     RegisteredMessage,
     RegistrationResult,
     SpendingAnswerMessage,
@@ -42,6 +44,7 @@ __all__ = [
     "format_brl",
     "format_date",
     "format_details",
+    "format_period_details",
     "format_period_summary",
     "format_registration",
     "format_reply",
@@ -60,6 +63,12 @@ _NO_ACCOUNTS_REPLY = "Nenhuma conta encontrada."
 _NO_TRANSACTIONS_REPLY = "Nenhuma transação no período."
 _NO_IDENTITY_REPLY = "Dados do titular não disponíveis."
 _NOT_INFORMED = "não informado"
+_MAX_DETAILS_ITEMS = 25
+_INCOME_REPLY = (
+    "Ainda não acompanho receitas nem quanto você recebeu. "
+    "Por enquanto eu registro despesas e previsões. "
+    'Para ver o que entrou na conta, peça "extrato de hoje" ou "qual meu saldo".'
+)
 
 _STATUS_TAGS: dict[BalanceStatus, str] = {
     BalanceStatus.OK: "[OK]",
@@ -145,6 +154,10 @@ def format_reply(reply: ChatReply) -> str:
         return reply.reason
     if isinstance(reply, HelpMessage):
         return HELP_TEXT
+    if isinstance(reply, IncomeMessage):
+        return _INCOME_REPLY
+    if isinstance(reply, PeriodDetails):
+        return format_period_details(reply)
     raise TypeError(f"Unsupported reply: {type(reply).__name__}")
 
 
@@ -443,6 +456,29 @@ def format_top_month(message: TopMonthMessage) -> str:
         blocks.append("\n".join(category_lines))
 
     return "\n\n".join(blocks)
+
+
+def format_period_details(details: PeriodDetails) -> str:
+    """Render the entries of a period, capped to a readable size."""
+    start = format_date(details.start)
+    end = format_date(details.end)
+    if not details.items:
+        return f"Nenhum lançamento de {start} a {end}."
+
+    lines = [f"Lançamentos de {start} a {end}"]
+    for item in details.items[:_MAX_DETAILS_ITEMS]:
+        bank = " (banco)" if item.from_bank else ""
+        lines.append(
+            f"- {item.day:%d/%m} {item.category.label}{bank}: "
+            f"{format_brl(item.amount_cents)} ({item.description})"
+        )
+    remaining = len(details.items) - _MAX_DETAILS_ITEMS
+    if remaining > 0:
+        lines.append(f"… e mais {remaining} lançamentos.")
+    total_cents = sum(item.amount_cents for item in details.items)
+    noun = "lançamento" if len(details.items) == 1 else "lançamentos"
+    lines.append(f"Total: {format_brl(total_cents)} ({len(details.items)} {noun})")
+    return "\n".join(lines)
 
 
 def format_details(entries: Sequence[Entry], day: date) -> str:
