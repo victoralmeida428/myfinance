@@ -19,7 +19,7 @@ from myfinance.application.ports import (
     PluggyItemRepository,
 )
 from myfinance.domain.banking import BankExpense
-from myfinance.domain.categories import Category
+from myfinance.domain.categories import Category, coerce_category
 
 __all__ = ["PluggyBankExpenseProvider"]
 
@@ -118,7 +118,7 @@ class PluggyBankExpenseProvider:
                             day=transaction.day,
                             description=transaction.description,
                             amount_cents=abs(transaction.amount_cents),
-                            category=category,
+                            category=coerce_category(category),
                             institution=item.connector_name,
                             raw_category=transaction.category,
                             description_raw=transaction.description_raw,
@@ -133,4 +133,4 @@ class PluggyBankExpenseProvider:
         if mapped is not None:
             return mapped
         classified = await self._classifier.classify(description)
-        return classified or Category.OUTROS
+        return coerce_category(classified)

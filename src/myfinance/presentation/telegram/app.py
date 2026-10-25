@@ -139,6 +139,10 @@ async def _log_error(
     if error is None:
         return
     _LOGGER.error("Telegram update failed with %s", type(error).__name__)
+    if isinstance(error, AttributeError):
+        # AttributeError messages name the missing attribute; they do not
+        # contain user text, tokens or provider payloads.
+        _LOGGER.error("  detail: %s", error)
     for frame in traceback.extract_tb(error.__traceback__)[-4:]:
         _LOGGER.error(
             "  at %s:%s in %s", frame.filename, frame.lineno, frame.name

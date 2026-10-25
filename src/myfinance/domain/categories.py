@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["Category"]
+__all__ = ["Category", "coerce_category"]
 
 
 class Category(StrEnum):
@@ -31,3 +31,15 @@ _LABELS: dict[Category, str] = {
     Category.SERVICOS: "Serviços",
     Category.OUTROS: "Outros",
 }
+
+
+def coerce_category(value: object) -> Category:
+    """Return a valid category, falling back to ``OUTROS`` for bad input."""
+    if isinstance(value, Category):
+        return value
+    if isinstance(value, str):
+        try:
+            return Category(value)
+        except ValueError:
+            pass
+    return Category.OUTROS

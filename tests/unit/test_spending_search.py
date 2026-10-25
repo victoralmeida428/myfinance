@@ -469,6 +469,29 @@ async def test_parser_returning_none_yields_no_answer() -> None:
     assert answer is None
 
 
+async def test_invalid_bank_category_is_coerced_instead_of_crashing() -> None:
+    bank = FakeBankExpenses(
+        (
+            make_bank_expense(
+                date(2026, 10, 8),
+                3000,
+                None,  # type: ignore[arg-type]
+                "uber",
+            ),
+        )
+    )
+    use_case = build_use_case(
+        FakeSpendingParser(SpendingQuery("outubro", None, ("uber",))),
+        bank=bank,
+    )
+
+    answer = await use_case.execute("quanto gastei com uber?")
+
+    assert answer is not None
+    assert answer.count == 1
+    assert answer.total_cents == 3000
+
+
 async def test_query_without_category_or_keywords_yields_no_answer() -> None:
     use_case = build_use_case(
         FakeSpendingParser(SpendingQuery("outubro", None, ()))

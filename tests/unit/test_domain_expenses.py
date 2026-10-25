@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from myfinance.domain.banking import BankExpense
-from myfinance.domain.categories import Category
+from myfinance.domain.categories import Category, coerce_category
 from myfinance.domain.entries import Entry, EntryKind
 from myfinance.domain.expenses import manual_expenses_not_in_bank
 from myfinance.domain.money import Money
@@ -46,6 +46,17 @@ def make_bank_expense(
         description="almoço",
         institution=None,
     )
+
+
+def test_coerce_category_accepts_enums_and_valid_strings() -> None:
+    assert coerce_category(Category.SAUDE) is Category.SAUDE
+    assert coerce_category("saude") is Category.SAUDE
+
+
+def test_coerce_category_falls_back_to_outros() -> None:
+    assert coerce_category(None) is Category.OUTROS
+    assert coerce_category("unknown") is Category.OUTROS
+    assert coerce_category(42) is Category.OUTROS
 
 
 def test_forecasts_are_excluded() -> None:

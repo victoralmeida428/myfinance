@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import date
 
@@ -17,10 +18,12 @@ from myfinance.application.ports import (
 )
 from myfinance.application.use_cases.common import strip_accents
 from myfinance.domain.banking import BankExpense
-from myfinance.domain.categories import Category
+from myfinance.domain.categories import Category, coerce_category
 from myfinance.domain.expenses import manual_expenses_not_in_bank
 
 __all__ = ["SearchSpendingUseCase"]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SearchSpendingUseCase:
@@ -73,18 +76,26 @@ class SearchSpendingUseCase:
             ):
                 amounts.append(entry.amount.cents)
         for expense in bank_expenses:
+            raw = getattr(expense, "category", None)
+            category = coerce_category(raw)
+            if not isinstance(raw, Category):
+                _LOGGER.warning(
+                    "Bank expense with %s category (%s) coerced to OUTROS",
+                    type(raw).__name__,
+                    type(expense).__name__,
+                )
             if self._matches(
                 query,
-                expense.category,
+                category,
                 (
-                    expense.description,
-                    expense.category.label,
-                    expense.category.value,
-                    expense.raw_category or "",
-                    expense.description_raw or "",
+                    getattr(expense, "description", ""),
+                    category.label,
+                    category.value,
+                    getattr(expense, "raw_category", None) or "",
+                    getattr(expense, "description_raw", None) or "",
                 ),
             ):
-                amounts.append(expense.amount_cents)
+                amounts.append(getattr(expense, "amount_cents", 0))
 
         label = (
             query.category.label
