@@ -8,6 +8,7 @@ dependencies = [
     "openai>=3.35.1",
     "pluggy-sdk>=1.0.0.post73",
     "pydantic-settings>=2.16.1",
+    "python-dotenv>=1.2.4",
     "python-telegram-bot>=22.8",
     "uvicorn>=0.54.0",
 ]

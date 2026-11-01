@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from myfinance.accounts import AccountProfile
 from myfinance.application.use_cases import (
     GetDayDetailsUseCase,
     GetSummaryUseCase,
@@ -18,6 +19,7 @@ from myfinance.infrastructure.parsing.spending_query import (
 )
 from myfinance.infrastructure.sqlite import SqliteProcessedUpdateRepository
 from myfinance.presentation.telegram.composition import (
+    build_bot_accounts,
     build_container,
     build_follow_up_resolver,
     build_spending_parser,
@@ -99,3 +101,31 @@ def test_build_container_exposes_only_the_handler_entry_points(
         assert isinstance(container.details, GetDayDetailsUseCase)
         assert isinstance(container.updates, SqliteProcessedUpdateRepository)
         assert isinstance(container.register_item, RegisterPluggyItemUseCase)
+
+
+def test_build_bot_accounts_creates_one_database_per_account(
+    tmp_path: Path,
+) -> None:
+    profiles = tuple(
+        AccountProfile(
+            id=f"account-{index}",
+            name=f"Account {index}",
+            telegram_user_id=index,
+            settings=make_settings(
+                tmp_path, opencode_api_key=None
+            ).model_copy(
+                update={"database_path": tmp_path / f"account-{index}.db"}
+            ),
+        )
+        for index in (1, 2)
+    )
+
+    accounts = build_bot_accounts(profiles)
+
+    assert [account.profile.id for account in accounts] == [
+        "account-1",
+        "account-2",
+    ]
+    assert (tmp_path / "account-1.db").exists()
+    assert (tmp_path / "account-2.db").exists()
+    assert accounts[0].container is not accounts[1].container

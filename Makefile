@@ -5,7 +5,7 @@ SERVICE ?= bot
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install run api test build up down restart logs logs-bot logs-api ps pull deploy
+.PHONY: help install run api test build up down restart logs logs-bot logs-api ps pull deploy accounts-check
 
 help:
 	@echo "install  - uv sync"
@@ -14,6 +14,7 @@ help:
 	@echo "test     - run the test suite"
 	@echo "build    - build the Docker image"
 	@echo "up       - start api+bot with Docker Compose"
+	@echo "accounts-check - ensure the secret accounts.toml exists"
 	@echo "down     - stop the containers"
 	@echo "restart  - restart the containers"
 	@echo "logs     - follow VPS logs (SERVICE=bot|api)"
@@ -26,7 +27,7 @@ help:
 install:
 	uv sync
 
-run:
+run: accounts-check
 	uv run python bot.py
 
 api:
@@ -38,7 +39,10 @@ test:
 build:
 	docker build -t $(IMAGE) .
 
-up:
+accounts-check:
+	@test -f accounts.toml || { echo "Missing accounts.toml. Copy accounts.example.toml and chmod 600 accounts.toml."; exit 1; }
+
+up: accounts-check
 	docker compose up -d --build
 
 down:
@@ -64,4 +68,4 @@ pull:
 
 deploy:
 	git push origin main
-	ssh $(VPS) 'cd $(REMOTE_DIR) && git pull --ff-only && docker compose up -d --build'
+	ssh $(VPS) 'cd $(REMOTE_DIR) && { test -f accounts.toml || { echo "Missing accounts.toml on the VPS."; exit 1; }; } && git pull --ff-only && docker compose up -d --build'

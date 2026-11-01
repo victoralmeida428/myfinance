@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+from collections.abc import Sequence
+from uuid import UUID
 
 from telegram import Update
 from telegram.ext import (
@@ -15,14 +17,21 @@ from telegram.ext import (
     filters,
 )
 
+from myfinance.accounts import load_accounts
 from myfinance.config import Settings, get_settings
 from myfinance.presentation.telegram.composition import (
+    BotAccount,
     BotContainer,
-    build_container,
+    build_bot_accounts,
 )
 from myfinance.presentation.telegram.handlers import BotHandlers
 
-__all__ = ["build_telegram_application", "run_bot", "seed_configured_item"]
+__all__ = [
+    "build_telegram_application",
+    "run_bot",
+    "seed_configured_item",
+    "seed_configured_items",
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,62 +40,96 @@ _MISSING_TOKEN_MESSAGE = (
     "the environment."
 )
 
-_MISSING_OWNER_MESSAGE = (
-    "Missing TELEGRAM_OWNER_ID. Get your numeric Telegram ID from "
-    "@userinfobot and set it in the environment."
+_MISSING_ACCOUNTS_MESSAGE = (
+    "No accounts configured. Create accounts.toml from accounts.example.toml "
+    "and keep it secret."
 )
 
 
 def build_telegram_application(
-    settings: Settings, container: BotContainer
+    settings: Settings, accounts: Sequence[BotAccount]
 ) -> Application:
-    """Build the polling application with every handler registered."""
+    """Build the polling application with one handler group per account."""
     token = _require_token(settings)
-    owner = filters.User(user_id=_require_owner(settings))
-    handlers = BotHandlers(
-        conversation=container.conversation,
-        summary=container.summary,
-        details=container.details,
-        updates=container.updates,
-        register_item=container.register_item,
-    )
+    if not accounts:
+        raise RuntimeError(_MISSING_ACCOUNTS_MESSAGE)
 
     application = (
         Application.builder().token(token).concurrent_updates(True).build()
     )
-    application.add_handler(
-        CommandHandler(["start"], handlers.start, filters=owner)
-    )
-    application.add_handler(
-        CommandHandler(["ajuda", "help"], handlers.help, filters=owner)
-    )
-    application.add_handler(
-        CommandHandler("resumo", handlers.summary, filters=owner)
-    )
-    application.add_handler(
-        CommandHandler("detalhes", handlers.details, filters=owner)
-    )
-    application.add_handler(
-        CommandHandler("item", handlers.item_command, filters=owner)
-    )
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND & owner, handlers.message)
-    )
-    application.add_handler(
-        MessageHandler((filters.VOICE | filters.AUDIO) & owner, handlers.unsupported)
-    )
+    for group, account in enumerate(accounts):
+        owner = filters.User(user_id=account.profile.telegram_user_id)
+        handlers = BotHandlers(
+            conversation=account.container.conversation,
+            summary=account.container.summary,
+            details=account.container.details,
+            updates=account.container.updates,
+            register_item=account.container.register_item,
+        )
+        application.add_handler(
+            CommandHandler(["start"], handlers.start, filters=owner),
+            group=group,
+        )
+        application.add_handler(
+            CommandHandler(["ajuda", "help"], handlers.help, filters=owner),
+            group=group,
+        )
+        application.add_handler(
+            CommandHandler("resumo", handlers.summary, filters=owner),
+            group=group,
+        )
+        application.add_handler(
+            CommandHandler("detalhes", handlers.details, filters=owner),
+            group=group,
+        )
+        application.add_handler(
+            CommandHandler("item", handlers.item_command, filters=owner),
+            group=group,
+        )
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND & owner, handlers.message
+            ),
+            group=group,
+        )
+        application.add_handler(
+            MessageHandler(
+                (filters.VOICE | filters.AUDIO) & owner, handlers.unsupported
+            ),
+            group=group,
+        )
+
     application.add_error_handler(_log_error)
     return application
 
 
 def seed_configured_item(settings: Settings, container: BotContainer) -> None:
-    """Register the Pluggy item configured in the environment, if any."""
+    """Register the single Pluggy item configured in the environment, if any."""
     if settings.pluggy_item_id is None:
         return
+    _register_pluggy_item(
+        container, settings.pluggy_item_id, settings.pluggy_connector_name
+    )
+
+
+def seed_configured_items(accounts: Sequence[BotAccount]) -> None:
+    """Register every configured Pluggy item for every account."""
+    for account in accounts:
+        for item in account.profile.pluggy_items:
+            _register_pluggy_item(
+                account.container, item.item_id, item.connector_name
+            )
+
+
+def _register_pluggy_item(
+    container: BotContainer,
+    item_id: UUID,
+    connector_name: str | None,
+) -> None:
     asyncio.run(
         container.register_item.execute(
-            settings.pluggy_item_id,
-            connector_name=settings.pluggy_connector_name,
+            item_id,
+            connector_name=connector_name,
         )
     )
 
@@ -106,10 +149,9 @@ def run_bot() -> None:
     _configure_logging()
     settings = get_settings()
     _require_token(settings)
-    _require_owner(settings)
-    container = build_container(settings)
-    seed_configured_item(settings, container)
-    application = build_telegram_application(settings, container)
+    accounts = build_bot_accounts(load_accounts(settings))
+    seed_configured_items(accounts)
+    application = build_telegram_application(settings, accounts)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
@@ -122,13 +164,6 @@ def _require_token(settings: Settings) -> str:
     if not token:
         raise RuntimeError(_MISSING_TOKEN_MESSAGE)
     return token
-
-
-def _require_owner(settings: Settings) -> int:
-    """Return the allowed Telegram user ID, refusing an open bot."""
-    if settings.telegram_owner_id is None:
-        raise RuntimeError(_MISSING_OWNER_MESSAGE)
-    return settings.telegram_owner_id
 
 
 async def _log_error(

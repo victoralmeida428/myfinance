@@ -261,6 +261,7 @@ dependencies = [
     { name = "openai" },
     { name = "pluggy-sdk" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "python-telegram-bot" },
     { name = "uvicorn" },
 ]
@@ -278,6 +279,7 @@ requires-dist = [
     { name = "openai", specifier = ">=3.35.1" },
     { name = "pluggy-sdk", specifier = ">=1.0.0.post73" },
     { name = "pydantic-settings", specifier = ">=2.16.1" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "python-telegram-bot", specifier = ">=22.8" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]

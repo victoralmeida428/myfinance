@@ -24,10 +24,11 @@ services:
     command: ["python", "bot.py"]
     env_file: .env
     environment:
-      DATABASE_PATH: /app/data/myfinance.db
+      ACCOUNTS_FILE: /app/accounts.toml
       TZ: America/Sao_Paulo
     volumes:
       - ./data:/app/data
+      - ./accounts.toml:/app/accounts.toml:ro
     restart: unless-stopped
     init: true
     depends_on:

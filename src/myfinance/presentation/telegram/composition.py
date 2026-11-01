@@ -6,8 +6,10 @@ ports. Handlers receive the conversation and the command use cases ready to use.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+from myfinance.accounts import AccountProfile
 from myfinance.application.ports import (
     ConversationMemory,
     FollowUpResolver,
@@ -83,7 +85,9 @@ from myfinance.infrastructure.sqlite import (
 from myfinance.presentation.telegram.conversation import TelegramConversation
 
 __all__ = [
+    "BotAccount",
     "BotContainer",
+    "build_bot_accounts",
     "build_container",
     "build_follow_up_resolver",
     "build_spending_parser",
@@ -99,6 +103,24 @@ class BotContainer:
     details: GetDayDetailsUseCase
     updates: ProcessedUpdateRepository
     register_item: RegisterPluggyItemUseCase
+
+
+@dataclass(frozen=True, slots=True)
+class BotAccount:
+    """A configured account together with its fully wired bot container."""
+
+    profile: AccountProfile
+    container: BotContainer
+
+
+def build_bot_accounts(
+    profiles: Sequence[AccountProfile],
+) -> tuple[BotAccount, ...]:
+    """Build one isolated container per configured account."""
+    return tuple(
+        BotAccount(profile=profile, container=build_container(profile.settings))
+        for profile in profiles
+    )
 
 
 def build_container(settings: Settings) -> BotContainer:

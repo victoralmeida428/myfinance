@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_owner_id: int | None = None
     database_path: Path = Path("myfinance.db")
+    accounts_file: Path = Path("accounts.toml")
     timezone: str = "America/Sao_Paulo"
 
 
