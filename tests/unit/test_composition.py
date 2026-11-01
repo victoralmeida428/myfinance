@@ -32,7 +32,12 @@ class FakeModel:
         return "ok"
 
 
-def make_settings(tmp_path: Path, *, opencode_api_key: str | None) -> Settings:
+def make_settings(
+    tmp_path: Path,
+    *,
+    opencode_api_key: str | None,
+    categorizer_api_token: str | None = None,
+) -> Settings:
     return Settings(
         _env_file=None,
         pluggy_client_id=uuid4(),
@@ -40,6 +45,7 @@ def make_settings(tmp_path: Path, *, opencode_api_key: str | None) -> Settings:
         telegram_owner_id=1,
         database_path=tmp_path / "test.db",
         opencode_api_key=opencode_api_key,
+        categorizer_api_token=categorizer_api_token,
     )
 
 
@@ -86,6 +92,55 @@ def test_build_container_wires_the_jev_classifier(tmp_path: Path) -> None:
     container = build_container(settings)
 
     assert isinstance(container.conversation, TelegramConversation)
+
+
+def capture_bank_expense_classifier(
+    monkeypatch, settings: Settings
+) -> dict[str, object]:
+    from myfinance.presentation.telegram import composition
+
+    captured: dict[str, object] = {}
+
+    class CapturingProvider(composition.PluggyBankExpenseProvider):
+        def __init__(self, banking, items, classifier):
+            captured["classifier"] = classifier
+            super().__init__(banking, items, classifier)
+
+    monkeypatch.setattr(
+        composition, "PluggyBankExpenseProvider", CapturingProvider
+    )
+    composition.build_container(settings)
+    return captured
+
+
+def test_build_container_uses_the_category_classifier_for_bank_expenses(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from myfinance.infrastructure.categorization import (
+        FallbackCategoryClassifier,
+    )
+
+    settings = make_settings(
+        tmp_path,
+        opencode_api_key=None,
+        categorizer_api_token="test-token",
+    )
+    captured = capture_bank_expense_classifier(monkeypatch, settings)
+
+    assert isinstance(captured["classifier"], FallbackCategoryClassifier)
+
+
+def test_build_container_gives_bank_expenses_a_classifier_without_a_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from myfinance.infrastructure.categorization import (
+        KeywordCategoryClassifier,
+    )
+
+    settings = make_settings(tmp_path, opencode_api_key=None)
+    captured = capture_bank_expense_classifier(monkeypatch, settings)
+
+    assert isinstance(captured["classifier"], KeywordCategoryClassifier)
 
 
 def test_build_container_exposes_only_the_handler_entry_points(

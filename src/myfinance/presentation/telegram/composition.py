@@ -131,18 +131,20 @@ def build_container(settings: Settings) -> BotContainer:
     entries = SqliteEntryRepository(database)
     updates = SqliteProcessedUpdateRepository(database)
 
-    classifier = _build_classifier(settings)
+    category_classifier = _build_classifier(settings)
     model = _build_model(settings)
     explain_failure = ExplainFailureUseCase(model) if model is not None else None
 
     parser = CompositeMessageParser(
-        DeterministicMessageParser(resolver, classifier),
-        OpenCodeMessageParser(model, classifier) if model is not None else None,
+        DeterministicMessageParser(resolver, category_classifier),
+        OpenCodeMessageParser(model, category_classifier)
+        if model is not None
+        else None,
         JevLLMGate(settings) if _has_categorizer_token(settings) else None,
     )
 
     register = RegisterEntryUseCase(entries, clock)
-    classifier = (
+    intent_classifier = (
         JevMessageIntentRouter(settings)
         if _has_categorizer_token(settings)
         else None
@@ -151,7 +153,9 @@ def build_container(settings: Settings) -> BotContainer:
     items = SqlitePluggyItemRepository(database)
     banking_repository = SqliteBankingRepository(database)
     provider = PluggyBankingProvider(settings)
-    bank_expenses = PluggyBankExpenseProvider(provider, items, classifier)
+    bank_expenses = PluggyBankExpenseProvider(
+        provider, items, category_classifier
+    )
     summary = GetDailySummaryUseCase(entries, clock, resolver, bank_expenses)
     period_summary = GetPeriodSummaryUseCase(entries, clock, bank_expenses)
     top_month = GetTopSpendingMonthUseCase(entries, bank_expenses, clock)
@@ -160,7 +164,7 @@ def build_container(settings: Settings) -> BotContainer:
     jev_intent = JevIntentRouter(settings) if _has_categorizer_token(settings) else None
     banking_router = CompositeIntentRouter(keyword_intent, jev_intent)
     message_router = CompositeMessageIntentRouter(
-        keyword_intent, jev_intent, classifier=classifier
+        keyword_intent, jev_intent, classifier=intent_classifier
     )
 
     register_item = RegisterPluggyItemUseCase(items, clock)
